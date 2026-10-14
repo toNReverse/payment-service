@@ -42,3 +42,29 @@ jars stay separate.
 - **Jedis** (`RedisClient`) rather than Lettuce: synchronous and pooled, which is all that counters and
   rate limiting need. Lettuce's async/reactive API would add complexity without benefit here.
 - **HikariCP**: the standard JDBC connection pool. jOOQ will use the same `DataSource` from Milestone 3.
+
+## 6. Money is a `long` of minor units plus a `java.util.Currency`
+
+`double` cannot represent 0.10 exactly, so it is never used for money. Between `BigDecimal` and a
+`long` of minor units (cents), the `long` wins here: Stripe's API, the database column (`BIGINT`) and
+the arithmetic all work in whole cents, so there is never a rounding mode to choose. `BigDecimal`
+would be the right tool for division (tax, currency conversion), which this service does not do.
+
+- `java.util.Currency` validates ISO 4217 codes and knows each currency's minor unit (2 for EUR, 0 for
+  JPY). Non-monetary codes such as `XAU` (gold) are rejected.
+- Codes must be upper case. Stripe sends `"eur"`; the Stripe adapter converts it at the boundary, so
+  the domain stays strict.
+- Amounts are never negative: a refund is a status change, not a negative amount.
+- `Math.addExact`/`multiplyExact` throw on overflow instead of silently wrapping to a negative number.
+- `Money` is not `Comparable`: "is 10 EUR more than 10 USD?" has no answer without an exchange rate.
+  `isGreaterThan` throws on mixed currencies instead.
+
+## 7. Order status is an enum with an explicit transition table
+
+The allowed transitions live in one `switch` inside `OrderStatus`, and every change goes through
+`transitionTo`, which throws `InvalidStatusTransitionException` for anything else. The switch has no
+`default`, so adding a status without deciding its transitions does not compile.
+
+The test writes the table out a second time on purpose and checks all 49 (from, to) pairs. If the
+test read the production table, a wrong entry would pass. Temporarily allowing `PAID -> PENDING_PAYMENT`
+makes the test fail, which confirms this.
