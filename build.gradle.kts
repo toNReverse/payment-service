@@ -27,6 +27,9 @@ dependencies {
     implementation(libs.jedis)
     implementation(libs.flyway.core)
     implementation(libs.jooq)
+    // jOOQ's Settings class carries JAXB annotations. Without their definitions javac warns while reading
+    // it, and -Werror turns that into an error. Only the compiler needs them, so nothing ships at runtime.
+    compileOnly(libs.jakarta.xml.bind.api)
     // Only needed at runtime: the code talks to javax.sql.DataSource, never to the driver directly.
     runtimeOnly(libs.postgresql)
     // Flyway finds its Postgres support through ServiceLoader at runtime.

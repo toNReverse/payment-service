@@ -1,5 +1,6 @@
 package io.github.tonreverse.payment.persistence;
 
+import static io.github.tonreverse.payment.persistence.jooq.Tables.IDEMPOTENCY_KEYS;
 import static io.github.tonreverse.payment.persistence.jooq.Tables.ORDERS;
 import static io.github.tonreverse.payment.persistence.jooq.Tables.ORDER_ITEMS;
 import static io.github.tonreverse.payment.persistence.jooq.Tables.PRODUCTS;
@@ -15,14 +16,14 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * <p>The container starts on first use and is shared by every integration test (starting one per test
  * class would add seconds each time). Testcontainers removes it when the JVM exits.
  */
-final class TestDatabase {
+public final class TestDatabase {
 
     private static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:16-alpine");
     private static DSLContext dsl;
 
     private TestDatabase() {}
 
-    static synchronized DSLContext dsl() {
+    public static synchronized DSLContext dsl() {
         if (dsl == null) {
             POSTGRES.start();
             HikariDataSource dataSource = Database.createDataSource(
@@ -34,7 +35,8 @@ final class TestDatabase {
     }
 
     /** Removes what tests created. The seeded catalog stays; test products use ids starting with "test-". */
-    static void deleteTestData() {
+    public static void deleteTestData() {
+        dsl().deleteFrom(IDEMPOTENCY_KEYS).execute();
         dsl().deleteFrom(ORDER_ITEMS).execute();
         dsl().deleteFrom(ORDERS).execute();
         dsl().deleteFrom(PRODUCTS).where(PRODUCTS.ID.startsWith("test-")).execute();

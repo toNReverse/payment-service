@@ -28,12 +28,11 @@ public final class JooqOrderRepository implements OrderRepository {
 
     @Override
     public void insert(Order order) {
-        // One transaction: if any item insert fails, the order row is rolled back too.
         CheckoutSession checkout = order.checkoutSession();
-        dsl.transaction(transaction -> {
-            DSLContext tx = transaction.dsl();
-
-            tx.insertInto(ORDERS)
+        // One transaction: if any item insert fails, the order row is rolled back too. Inside
+        // Transactions.inTransaction this becomes a savepoint within the caller's transaction.
+        dsl.transaction(() -> {
+            dsl.insertInto(ORDERS)
                     .set(ORDERS.ID, order.id())
                     .set(ORDERS.CUSTOMER_EMAIL, order.customerEmail())
                     .set(ORDERS.TOTAL_MINOR, order.total().amountMinor())
@@ -46,7 +45,7 @@ public final class JooqOrderRepository implements OrderRepository {
                     .execute();
 
             // All items in a single multi-row INSERT.
-            var items = tx.insertInto(ORDER_ITEMS,
+            var items = dsl.insertInto(ORDER_ITEMS,
                     ORDER_ITEMS.ORDER_ID, ORDER_ITEMS.PRODUCT_ID, ORDER_ITEMS.QUANTITY, ORDER_ITEMS.UNIT_PRICE_MINOR);
             for (OrderItem item : order.items()) {
                 items = items.values(order.id(), item.productId(), item.quantity(), item.unitPrice().amountMinor());
