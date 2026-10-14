@@ -3,6 +3,7 @@ package io.github.tonreverse.payment.persistence;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.tonreverse.payment.domain.CheckoutSession;
 import io.github.tonreverse.payment.domain.Money;
 import io.github.tonreverse.payment.domain.Order;
 import io.github.tonreverse.payment.domain.OrderItem;
@@ -45,7 +46,9 @@ class JooqOrderRepositoryTest {
         Instant updatedAt = CREATED_AT.plusSeconds(90);
         Order order = new Order(UUID.randomUUID(), "anna@example.com",
                 List.of(new OrderItem("pandoro", 1, Money.of(2_600, "EUR"))), Money.of(2_600, "EUR"),
-                OrderStatus.PENDING_PAYMENT, "cs_test_a1b2c3", CREATED_AT, updatedAt);
+                OrderStatus.PENDING_PAYMENT,
+                new CheckoutSession("cs_test_a1b2c3", "https://checkout.stripe.com/c/pay/cs_test_a1b2c3"),
+                CREATED_AT, updatedAt);
 
         repository.insert(order);
 

@@ -3,6 +3,7 @@ package io.github.tonreverse.payment.persistence;
 import static io.github.tonreverse.payment.persistence.jooq.Tables.ORDERS;
 import static io.github.tonreverse.payment.persistence.jooq.Tables.ORDER_ITEMS;
 
+import io.github.tonreverse.payment.domain.CheckoutSession;
 import io.github.tonreverse.payment.domain.Money;
 import io.github.tonreverse.payment.domain.Order;
 import io.github.tonreverse.payment.domain.OrderItem;
@@ -28,6 +29,7 @@ public final class JooqOrderRepository implements OrderRepository {
     @Override
     public void insert(Order order) {
         // One transaction: if any item insert fails, the order row is rolled back too.
+        CheckoutSession checkout = order.checkoutSession();
         dsl.transaction(transaction -> {
             DSLContext tx = transaction.dsl();
 
@@ -37,7 +39,8 @@ public final class JooqOrderRepository implements OrderRepository {
                     .set(ORDERS.TOTAL_MINOR, order.total().amountMinor())
                     .set(ORDERS.CURRENCY, order.total().currency().getCurrencyCode())
                     .set(ORDERS.STATUS, order.status().name())
-                    .set(ORDERS.CHECKOUT_SESSION_ID, order.checkoutSessionId())
+                    .set(ORDERS.CHECKOUT_SESSION_ID, checkout == null ? null : checkout.id())
+                    .set(ORDERS.CHECKOUT_URL, checkout == null ? null : checkout.url())
                     .set(ORDERS.CREATED_AT, toOffsetDateTime(order.createdAt()))
                     .set(ORDERS.UPDATED_AT, toOffsetDateTime(order.updatedAt()))
                     .execute();
@@ -74,7 +77,9 @@ public final class JooqOrderRepository implements OrderRepository {
                 items,
                 new Money(row.getTotalMinor(), currency),
                 OrderStatus.valueOf(row.getStatus()),
-                row.getCheckoutSessionId(),
+                row.getCheckoutSessionId() == null
+                        ? null
+                        : new CheckoutSession(row.getCheckoutSessionId(), row.getCheckoutUrl()),
                 row.getCreatedAt().toInstant(),
                 row.getUpdatedAt().toInstant()));
     }
