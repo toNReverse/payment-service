@@ -24,9 +24,12 @@ its database. On Kubernetes this would be split into `/health/live` (process is 
 dependencies, otherwise a database outage would restart every pod) and `/health/ready`.
 
 Every check has a bounded timeout (pool connection timeout 2 s, `Connection.isValid` 1 s, Jedis 2 s), so
-the endpoint answers even when a dependency hangs. The pools are created lazily
-(`initializationFailTimeout = -1`), so the service starts and reports `DOWN` instead of crashing if
-Postgres or Redis is not up yet.
+the endpoint answers even when a dependency hangs.
+
+Since Milestone 3 the service runs its migrations at startup (decision 9), so it needs Postgres to boot
+and exits if Postgres is unreachable. Compose starts the app only after Postgres is healthy, and an
+orchestrator would restart it. After startup, `/health` reports the database going away. Redis is
+connected lazily: the service starts without it and reports it `DOWN`.
 
 ## 4. Packaging with `installDist`, not a fat jar
 
@@ -68,3 +71,44 @@ The allowed transitions live in one `switch` inside `OrderStatus`, and every cha
 The test writes the table out a second time on purpose and checks all 49 (from, to) pairs. If the
 test read the production table, a wrong entry would pass. Temporarily allowing `PAID -> PENDING_PAYMENT`
 makes the test fail, which confirms this.
+
+## 8. jOOQ classes are generated from the migration files
+
+jOOQ's `DDLDatabase` reads `src/main/resources/db/migration` in Flyway order and generates one class per
+table at build time. The generated code therefore always matches the migrations, and compiling needs
+no database or Docker, including inside the Docker image build. Generated code lives in `build/` and is
+not committed.
+
+The catch: `DDLDatabase` simulates the DDL in an in-memory H2 database, which supports only part of
+Postgres's syntax. For example, H2 cannot index a `TEXT` column, so the schema uses `VARCHAR(n)` (in
+Postgres both perform the same, and the limits bound what clients can store). If the schema later needs
+Postgres-only features (partial indexes, custom types), the alternative is to generate against a real
+Postgres started by Testcontainers. Either way, the integration tests run the generated code against a
+real Postgres.
+
+## 9. Migrations run when the service starts
+
+`App.main()` runs Flyway before serving any request, so the schema always matches the code that is
+running, and there is a single artifact to deploy. Flyway takes a lock in Postgres, so two instances
+starting together do not apply the same migration twice. In a larger deployment, migrations would run
+as a separate step before the rollout, and every migration would stay compatible with the previous
+version of the code (expand, then contract).
+
+## 10. Repositories: interfaces, hand-written mapping, explicit transactions
+
+- `ProductRepository` and `OrderRepository` are interfaces, so HTTP and service tests can use in-memory
+  fakes. The jOOQ implementations are tested against Postgres.
+- jOOQ records are mapped to domain records by hand. The domain has no jOOQ dependency, and the `Order`
+  constructor re-checks its invariants on every loaded row.
+- `JooqOrderRepository.insert` writes the order and its items in one transaction. A test inserts an
+  item with an unknown product and checks that the order row was rolled back too.
+- Items are loaded in product-id order. Line order means nothing for this shop, so there is no
+  position column.
+
+## 11. Unit and integration tests are separate Gradle tasks
+
+Tests that need Postgres carry the JUnit tag `integration`. `./gradlew test` skips them and needs no
+Docker; `./gradlew integrationTest` runs them; `./gradlew build` (and CI) runs both. All integration
+tests share one Testcontainers Postgres (the same `postgres:16-alpine` image as Compose), set up through
+the same `Database` class as production. Each test deletes the rows it created, and the seeded
+catalog stays.

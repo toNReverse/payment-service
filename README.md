@@ -13,6 +13,7 @@ Requires Docker.
 ```sh
 docker compose up --build
 curl -i localhost:8080/health
+curl -s localhost:8080/products
 ```
 
 ## Run the tests
@@ -20,5 +21,7 @@ curl -i localhost:8080/health
 Requires JDK 21.
 
 ```sh
-./gradlew test
+./gradlew test             # unit tests, no Docker needed
+./gradlew integrationTest  # repository tests against a real Postgres (Testcontainers, needs Docker)
+./gradlew build            # both, plus compilation and packaging (what CI runs)
 ```
