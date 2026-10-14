@@ -1,6 +1,7 @@
 package io.github.tonreverse.payment;
 
 import com.zaxxer.hikari.HikariDataSource;
+import io.github.tonreverse.payment.api.ApiErrors;
 import io.github.tonreverse.payment.api.HealthController;
 import io.github.tonreverse.payment.api.ProductController;
 import io.github.tonreverse.payment.config.AppConfig;
@@ -71,6 +72,8 @@ public final class App {
         return Javalin.create(config -> {
             config.startup.showJavalinBanner = false;
             config.jsonMapper(new JavalinJackson3());
+
+            ApiErrors.register(config.routes);
 
             config.routes.get("/health", health::handle);
             config.routes.get("/products", products::list);
