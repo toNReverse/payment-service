@@ -8,6 +8,8 @@
 
     <logger name="org.eclipse.jetty" level="WARN"/>
     <logger name="com.zaxxer.hikari" level="WARN"/>
+    <!-- jOOQ logs an ASCII-art logo and a "tip of the day" at startup on this logger. -->
+    <logger name="org.jooq.Constants" level="WARN"/>
 
     <root level="INFO">
         <appender-ref ref="STDOUT"/>
