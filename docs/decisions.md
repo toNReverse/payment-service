@@ -211,3 +211,70 @@ keeps it out of most PCI DSS scope, and whether the payment succeeded arrives la
 - **Currencies.** Stripe's "smallest currency unit" matches `Money`'s minor unit for EUR and most
   currencies. A few (such as HUF and ISK) follow Stripe-specific rules; the catalog is in EUR, so they
   are not handled.
+
+## 16. Webhooks: prove it is Stripe, then apply each event exactly once
+
+`POST /webhooks/stripe` is public, so anyone could post a fake "payment succeeded". Every request is
+therefore verified first: the `Stripe-Signature` header carries an HMAC-SHA256 of `"<timestamp>.<raw
+body>"` keyed with the endpoint's signing secret (`whsec_...`).
+- The check runs on the **raw bytes** of the body. Parsing and re-serializing the JSON first would
+  change the bytes and break the signature.
+- Signatures older than **5 minutes** are refused, so a captured request cannot be replayed later.
+- The SDK does the comparison in constant time and accepts several signatures while a secret is rolled.
+- Tests sign events with their own HMAC code, so they check Stripe's scheme rather than trust the SDK.
+
+Only the verification uses the SDK. The JSON is read with Jackson, because the SDK's `Event` classes
+only deserialize events whose API version matches the SDK's and silently return nothing otherwise. The
+parser then turns Stripe events into provider-neutral `PaymentUpdate`s, so the service knows nothing about
+Stripe event types.
+
+**Exactly once.** Stripe delivers *at least* once and retries anything that is not a 2xx. Each event is
+handled in one transaction:
+1. lock the order row (`SELECT ... FOR UPDATE`), so two events for the same order run one after the other;
+2. if the event id is already in `payment_events`, it is a redelivery: answer 200, change nothing;
+3. decide what the event means (a pure function, unit-tested case by case);
+4. insert the event (its id is the primary key) and apply the decision. Both commit or neither does.
+
+Answers: **200** for every genuine event that was dealt with (applied, recorded, ignored or seen before),
+**400** for a forged one, **409** for one that came too early (see decision 18), **503** when no signing
+secret is configured.
+
+## 17. Mapping Stripe events to order statuses (deviates from the brief)
+
+| Stripe event | Effect |
+|---|---|
+| `checkout.session.completed` with `payment_status=paid` | `PAID`, after the amount check (decision 19) |
+| `checkout.session.completed`, still `unpaid` | recorded only: a delayed method (e.g. SEPA) is still clearing |
+| `checkout.session.async_payment_succeeded` | `PAID`, after the amount check |
+| `checkout.session.async_payment_failed` | `FAILED` |
+| `checkout.session.expired` | `EXPIRED` |
+| `payment_intent.payment_failed` | **recorded only, the order stays `PENDING_PAYMENT`** |
+| `charge.refunded` | `REFUNDED` if fully refunded; a partial refund is recorded only |
+| anything else, or no order id | stored as ignored |
+
+The brief maps `payment_intent.payment_failed` to `FAILED`. With Checkout that is wrong: a declined card
+does not end the session, and the customer can try another card on the same page. A terminal `FAILED`
+would then block the `PAID` that follows. So a failed attempt is only recorded (with Stripe's reason).
+`FAILED` comes from `async_payment_failed`, the only failure that is final, and abandoned checkouts end as
+`EXPIRED`.
+
+The order id travels in the metadata (decision 15). A test-mode experiment confirmed that the Charge
+inherits the PaymentIntent's metadata, so `charge.refunded` carries the order id as well.
+
+## 18. Events that arrive out of order
+
+Stripe does not guarantee delivery order. When an event's target status cannot be reached directly from
+the order's current status, the state machine tells the two cases apart (`OrderStatus.canEventuallyReach`):
+- **Reachable later** (a refund while the order is still `PENDING_PAYMENT`): the event came early. Nothing
+  is stored and the answer is 409, so Stripe delivers it again later, after the payment event.
+- **No longer reachable** (an expiry after `PAID`): the event is stale. It is stored as ignored and
+  answered 200.
+
+This works because the state machine has no cycles, so a status that has been passed can never come back.
+
+## 19. Check what Stripe charged before marking an order paid
+
+A payment event marks the order `PAID` only if it is for the order's own checkout session and Stripe's
+`amount_total` and currency equal the stored total. Otherwise the order becomes `FLAGGED` with a
+`fraud_flags` row saying what differed (`payment_amount_mismatch` or `checkout_session_mismatch`), for a
+human to review: money was taken, but not the money we expected.
