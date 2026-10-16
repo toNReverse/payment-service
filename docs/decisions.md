@@ -176,3 +176,38 @@ Validation reports every problem at once.
 JSON input is strict: unknown fields, `2.5` or `"2"` for a quantity are 400s. Jackson 3's defaults would
 silently ignore a misspelled field or truncate 2.5 to 2, which for an order means charging for the wrong
 thing.
+
+## 15. Stripe Checkout behind the `PaymentGateway` interface
+
+The customer pays on a page hosted by Stripe (Checkout). Card details never reach this service, which
+keeps it out of most PCI DSS scope, and whether the payment succeeded arrives later by webhook
+(Milestone 6). `OrderService` only sees `PaymentGateway`; `StripePaymentGateway` is the real one.
+
+- **Prices come from our catalog, not from Stripe.** Each order line becomes a Checkout line item with
+  inline `price_data` (our stored unit price and product name) rather than a Stripe Product/Price, so
+  there is a single catalog and nothing to keep in sync. Stripe adds the lines up itself; a unit test
+  checks that the sum equals the order total, and the webhook will compare `amount_total` again.
+- **Names are kept on the order lines** (migration V5), like the unit price: the checkout page shows
+  "Pandoro 1 kg × 2", and editing the catalog later does not rewrite past orders.
+- **The order id travels with the payment**: `client_reference_id` and `metadata.order_id` on the session,
+  and `metadata.order_id` on the PaymentIntent, because `payment_intent.*` events do not include the
+  session. The webhooks of Milestone 6 use it to find the order.
+- **Bounded calls.** The SDK's default read timeout is 80 s. Here it is 5 s to connect and 10 s to read,
+  with 2 automatic retries: at most about 50 s, which is less than the 60 s idempotency lock timeout. A
+  unit test enforces that relation, because a request still waiting for Stripe must not have its key
+  taken over. The SDK resends the same Stripe `Idempotency-Key` (`checkout-session-<order id>`) on
+  retries, so a retry never creates a second session.
+- **Test mode only.** `AppConfig` refuses any key that is not `sk_test_` or `rk_test_`, without repeating
+  the value in the error, and `toString()` shows only the prefix. The key lives in `.env`, which is
+  ignored by git and by the Docker build. Without a key the service falls back to `FakePaymentGateway`,
+  so CI and `docker compose up` need no Stripe account.
+- **Three levels of tests.** The request is built by a pure function and checked without any network
+  call. The real SDK then makes real HTTP calls against `stripe-mock` (Stripe's official mock server,
+  started by Testcontainers), which rejects any parameter that does not match Stripe's API
+  specification; it needs no key, so it runs in CI. Finally a manual run against Stripe's test mode
+  confirmed amount, currency, line items and metadata through Stripe's own API.
+- **Versions.** stripe-java 34.0.0 pins Stripe API version `2026-09-30.endive`, so upgrading the SDK is
+  the only thing that changes the API version.
+- **Currencies.** Stripe's "smallest currency unit" matches `Money`'s minor unit for EUR and most
+  currencies. A few (such as HUF and ISK) follow Stripe-specific rules; the catalog is in EUR, so they
+  are not handled.

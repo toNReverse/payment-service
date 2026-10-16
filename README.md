@@ -24,7 +24,20 @@ curl -i -X POST localhost:8080/orders \
 curl -s localhost:8080/orders/<id from the response>
 ```
 
-Until Milestone 5 the checkout URL is a placeholder: no real payment provider is called.
+### Paying with Stripe (test mode)
+
+Without configuration the service uses a fake payment gateway and the checkout URL is a placeholder.
+To get a real Stripe Checkout page, put a **test-mode** secret key in `.env` (never committed; live keys
+are refused at startup), then restart:
+
+```sh
+cp .env.example .env    # then set STRIPE_SECRET_KEY=sk_test_... in .env
+docker compose up --build
+```
+
+Open the `checkoutUrl` from the `POST /orders` response and pay with the test card `4242 4242 4242 4242`
+(any future expiry date, any CVC). Stripe then redirects to `GET /orders/{id}`. The order stays
+`PENDING_PAYMENT` until webhooks are handled (Milestone 6).
 
 ## Run the tests
 
