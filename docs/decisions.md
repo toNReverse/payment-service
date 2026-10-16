@@ -112,3 +112,67 @@ Docker; `./gradlew integrationTest` runs them; `./gradlew build` (and CI) runs b
 tests share one Testcontainers Postgres (the same `postgres:16-alpine` image as Compose), set up through
 the same `Database` class as production. Each test deletes the rows it created, and the seeded
 catalog stays.
+
+## 12. Idempotency keys: reserve, call the provider, then save and complete together
+
+`POST /orders` requires an `Idempotency-Key` header. A client that does not know whether its request
+arrived (timeout, dropped connection) sends it again with the same key and must get the same order,
+never a second one. The key is stored in `idempotency_keys`:
+
+1. **Reserve.** `INSERT ... ON CONFLICT DO NOTHING` creates the row `IN_PROGRESS`. It is a single
+   statement, so of several concurrent requests with the same key exactly one inserts; a SELECT followed
+   by an INSERT would let two of them through. If the row already exists:
+   - a different request fingerprint means the key was reused for another order → **422**;
+   - `COMPLETED` → return the order created by the first request, with **201** and
+     `Idempotent-Replayed: true` (Stripe's header);
+   - `IN_PROGRESS` → the first request is still running → **409** with `Retry-After: 1`.
+2. **Do the work while holding the key**: price the items from the catalog and create the Stripe
+   checkout session. No database transaction is open during the provider call: holding one (and its
+   pooled connection) across a network call of unknown length would starve the pool under load.
+3. **Save and complete in one transaction**: insert the order and mark the key `COMPLETED`. There is no
+   moment where the order exists but the key does not point to it. That would happen if idempotency
+   were a generic HTTP filter storing the response after the handler had already committed the order.
+4. **On failure, release the key.** Validation errors and provider outages (502) delete the reservation,
+   so the client can retry with the same key. Nothing was saved, and the checkout session (if any) was
+   never shown to anyone, so it cannot be paid and simply expires.
+
+**Crashes and fencing.** If the process dies between steps 1 and 3, the key stays `IN_PROGRESS`. After
+the lock timeout (60 s, longer than the slowest provider call) a retry takes it over with a
+compare-and-set on `locked_at`. That timestamp is also a *fencing token*: completing and releasing only
+succeed while `locked_at` is still the caller's. A request that was merely slow, not dead, therefore
+cannot also save an order after being taken over: completing fails, its transaction rolls back, and the
+key keeps a single order (`OrderIdempotencyIntegrationTest` checks this against Postgres).
+
+**Fingerprint.** SHA-256 of the normalized request: lower-cased email plus lines sorted by product id.
+Listing the same products in another order is the same request; changing a quantity is not. Prices are
+not part of the request at all; they come from the catalog.
+
+**Replays show the order as it is now.** A replay returns the same order (same id, same checkout page)
+in its current state, for example `PAID` once the webhook has arrived, rather than a byte-for-byte copy
+of the first response. That keeps idempotency in the service, where it can share the order's
+transaction, instead of storing HTTP bodies.
+
+**Limitations.** Keys are global, because there are no client accounts to scope them to, and they never
+expire. A production version would scope keys per API client and delete them after 24 hours, as Stripe
+does.
+
+## 13. Transactions are bound to the request's thread
+
+The service needs the order insert and the key completion in one transaction without knowing about jOOQ.
+`Transactions.inTransaction(work)` runs `work` inside `dsl.transaction(...)`, and the DSLContext is built
+with jOOQ's `ThreadLocalTransactionProvider`: while the work runs, every query made through that
+DSLContext on the same thread uses the transaction's connection. Repositories therefore need no
+transaction parameter. The alternative, passing a transaction object into every repository call, is
+more explicit but clutters every signature. The rule to remember is that the work must not hand
+database calls to another thread. A Javalin request runs on one thread, so this holds.
+
+## 14. One error format, strict input
+
+Every error is `{"error": "<code>", "details": ["..."]}`, built only in `ApiErrors`: services and the
+domain throw, nobody else writes error responses. Unexpected exceptions are logged with their stack trace
+and answered with a generic 500, because messages can contain hostnames, SQL or customer data.
+Validation reports every problem at once.
+
+JSON input is strict: unknown fields, `2.5` or `"2"` for a quantity are 400s. Jackson 3's defaults would
+silently ignore a misspelled field or truncate 2.5 to 2, which for an order means charging for the wrong
+thing.

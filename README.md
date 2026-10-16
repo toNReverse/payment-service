@@ -14,7 +14,17 @@ Requires Docker.
 docker compose up --build
 curl -i localhost:8080/health
 curl -s localhost:8080/products
+
+# Place an order. Sending the same request again with the same key returns the same order.
+curl -i -X POST localhost:8080/orders \
+  -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"customerEmail": "anna@example.com", "items": [{"productId": "pandoro", "quantity": 2}]}'
+
+curl -s localhost:8080/orders/<id from the response>
 ```
+
+Until Milestone 5 the checkout URL is a placeholder: no real payment provider is called.
 
 ## Run the tests
 
