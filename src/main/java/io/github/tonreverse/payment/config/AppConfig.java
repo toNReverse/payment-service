@@ -17,6 +17,8 @@ import java.util.Map;
  * @param checkoutSuccessUrl where Stripe sends the customer after paying; {@value #ORDER_ID_PLACEHOLDER}
  *     is replaced with the order id
  * @param checkoutCancelUrl where Stripe sends the customer who leaves the checkout page
+ * @param stripeWebhookSecret the signing secret of the webhook endpoint (whsec_...), or null if this
+ *     instance does not receive webhooks
  */
 public record AppConfig(
         int port,
@@ -26,7 +28,8 @@ public record AppConfig(
         String redisUrl,
         String stripeSecretKey,
         String checkoutSuccessUrl,
-        String checkoutCancelUrl) {
+        String checkoutCancelUrl,
+        String stripeWebhookSecret) {
 
     public static final String ORDER_ID_PLACEHOLDER = "{ORDER_ID}";
     static final int DEFAULT_PORT = 8080;
@@ -44,16 +47,21 @@ public record AppConfig(
         String orderPage = "http://localhost:" + port + "/orders/" + ORDER_ID_PLACEHOLDER;
         String checkoutSuccessUrl = httpUrl(env, "CHECKOUT_SUCCESS_URL", orderPage, errors);
         String checkoutCancelUrl = httpUrl(env, "CHECKOUT_CANCEL_URL", orderPage, errors);
+        String stripeWebhookSecret = webhookSecret(env.get("STRIPE_WEBHOOK_SECRET"), errors);
 
         if (!errors.isEmpty()) {
             throw new IllegalStateException("Invalid configuration: " + String.join("; ", errors));
         }
         return new AppConfig(port, databaseUrl, databaseUser, databasePassword, redisUrl,
-                stripeSecretKey, checkoutSuccessUrl, checkoutCancelUrl);
+                stripeSecretKey, checkoutSuccessUrl, checkoutCancelUrl, stripeWebhookSecret);
     }
 
     public boolean usesStripe() {
         return stripeSecretKey != null;
+    }
+
+    public boolean receivesStripeWebhooks() {
+        return stripeWebhookSecret != null;
     }
 
     private static String required(Map<String, String> env, String name, List<String> errors) {
@@ -97,6 +105,18 @@ public record AppConfig(
         return key;
     }
 
+    /** Optional; shown by the Stripe CLI (stripe listen) or in the Dashboard for each endpoint. */
+    private static String webhookSecret(String value, List<String> errors) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String secret = value.strip();
+        if (!secret.startsWith("whsec_")) {
+            errors.add("STRIPE_WEBHOOK_SECRET must be a webhook signing secret (whsec_...)");
+        }
+        return secret;
+    }
+
     private static String httpUrl(Map<String, String> env, String name, String defaultValue, List<String> errors) {
         String value = env.get(name);
         if (value == null || value.isBlank()) {
@@ -121,10 +141,11 @@ public record AppConfig(
     @Override
     public String toString() {
         return ("AppConfig[port=%d, databaseUrl=%s, databaseUser=%s, databasePassword=****, redisUrl=%s, "
-                + "stripeSecretKey=%s, checkoutSuccessUrl=%s, checkoutCancelUrl=%s]")
+                + "stripeSecretKey=%s, checkoutSuccessUrl=%s, checkoutCancelUrl=%s, stripeWebhookSecret=%s]")
                 .formatted(port, databaseUrl, databaseUser, maskUserInfo(redisUrl),
                         stripeSecretKey == null ? "not set (fake gateway)" : stripeSecretKey.substring(0, 8) + "****",
-                        checkoutSuccessUrl, checkoutCancelUrl);
+                        checkoutSuccessUrl, checkoutCancelUrl,
+                        stripeWebhookSecret == null ? "not set (webhooks disabled)" : "whsec_****");
     }
 
     /** redis://user:password@host:6379 becomes redis://****@host:6379. */

@@ -157,6 +157,45 @@ class AppConfigTest {
     }
 
     @Test
+    void theWebhookSecretIsOptional() {
+        AppConfig config = AppConfig.from(validEnv());
+
+        assertThat(config.stripeWebhookSecret()).isNull();
+        assertThat(config.receivesStripeWebhooks()).isFalse();
+    }
+
+    @Test
+    void readsTheWebhookSigningSecret() {
+        Map<String, String> env = validEnv();
+        env.put("STRIPE_WEBHOOK_SECRET", "whsec_abc123");
+
+        AppConfig config = AppConfig.from(env);
+
+        assertThat(config.stripeWebhookSecret()).isEqualTo("whsec_abc123");
+        assertThat(config.receivesStripeWebhooks()).isTrue();
+    }
+
+    @Test
+    void refusesSomethingThatIsNotAWebhookSecretWithoutRepeatingIt() {
+        // A classic mix-up: pasting the API key where the webhook signing secret belongs.
+        Map<String, String> env = validEnv();
+        env.put("STRIPE_WEBHOOK_SECRET", "sk_test_51abcSECRET");
+
+        assertThatThrownBy(() -> AppConfig.from(env))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("STRIPE_WEBHOOK_SECRET")
+                .hasMessageNotContaining("abcSECRET");
+    }
+
+    @Test
+    void toStringHidesTheWebhookSecret() {
+        Map<String, String> env = validEnv();
+        env.put("STRIPE_WEBHOOK_SECRET", "whsec_abcSECRET");
+
+        assertThat(AppConfig.from(env).toString()).contains("whsec_****").doesNotContain("abcSECRET");
+    }
+
+    @Test
     void toStringDoesNotLeakThePassword() {
         assertThat(AppConfig.from(validEnv()).toString()).doesNotContain("s3cret");
     }

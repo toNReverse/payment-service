@@ -1,5 +1,7 @@
 package io.github.tonreverse.payment.payment;
 
+import static io.github.tonreverse.payment.testing.StripeSignatures.event;
+import static io.github.tonreverse.payment.testing.StripeSignatures.sign;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -11,14 +13,10 @@ import io.github.tonreverse.payment.payment.PaymentUpdate.PaymentFailed;
 import io.github.tonreverse.payment.payment.PaymentUpdate.PaymentSucceeded;
 import io.github.tonreverse.payment.payment.PaymentUpdate.Refunded;
 import io.github.tonreverse.payment.payment.PaymentUpdate.Unrelated;
-import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.HexFormat;
 import java.util.UUID;
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -29,28 +27,6 @@ class StripeWebhookParserTest {
     private static final UUID ORDER_ID = UUID.fromString("7d3f2a10-0000-4000-8000-000000000001");
 
     private final StripeWebhookParser parser = new StripeWebhookParser(SECRET, Clock.fixed(NOW, ZoneOffset.UTC));
-
-    /**
-     * Stripe's scheme, written out independently of the SDK so the test checks it rather than trusts it:
-     * header "t=<unix seconds>,v1=<hex HMAC-SHA256 of '<t>.<raw body>' keyed with the endpoint secret>".
-     */
-    static String sign(String payload, String secret, Instant at) {
-        try {
-            long timestamp = at.getEpochSecond();
-            Mac hmac = Mac.getInstance("HmacSHA256");
-            hmac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-            byte[] signature = hmac.doFinal((timestamp + "." + payload).getBytes(StandardCharsets.UTF_8));
-            return "t=" + timestamp + ",v1=" + HexFormat.of().formatHex(signature);
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
-
-    static String event(String id, String type, String object) {
-        return """
-                {"id": "%s", "object": "event", "type": "%s", "livemode": false, "data": {"object": %s}}
-                """.formatted(id, type, object);
-    }
 
     private PaymentUpdate updateFor(String type, String object) {
         String payload = event("evt_test_1", type, object);

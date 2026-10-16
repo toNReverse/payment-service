@@ -1,9 +1,11 @@
 package io.github.tonreverse.payment.api;
 
+import io.github.tonreverse.payment.payment.InvalidWebhookException;
 import io.github.tonreverse.payment.payment.PaymentGatewayException;
 import io.github.tonreverse.payment.service.IdempotencyKeyInUseException;
 import io.github.tonreverse.payment.service.IdempotencyKeyReusedException;
 import io.github.tonreverse.payment.service.NotFoundException;
+import io.github.tonreverse.payment.service.PaymentEventOutOfOrderException;
 import io.github.tonreverse.payment.service.ValidationException;
 import io.javalin.config.RoutesConfig;
 import io.javalin.http.Context;
@@ -48,6 +50,18 @@ public final class ApiErrors {
             respond(ctx, HttpStatus.BAD_GATEWAY, "payment_provider_unavailable",
                     List.of("The payment provider could not be reached. Retry with the same Idempotency-Key."));
         });
+
+        // Stripe webhooks: Stripe retries any non-2xx answer (see StripeWebhookController).
+        routes.exception(InvalidWebhookException.class, (e, ctx) -> {
+            log.warn("Rejected webhook on {}: {}", ctx.path(), e.getMessage());
+            respond(ctx, HttpStatus.BAD_REQUEST, "invalid_webhook", List.of(e.getMessage()));
+        });
+        routes.exception(PaymentEventOutOfOrderException.class, (e, ctx) -> {
+            log.info("Webhook arrived early, Stripe will retry: {}", e.getMessage());
+            respond(ctx, HttpStatus.CONFLICT, "event_out_of_order", List.of(e.getMessage()));
+        });
+        routes.exception(WebhooksNotConfiguredException.class,
+                (e, ctx) -> respond(ctx, HttpStatus.SERVICE_UNAVAILABLE, "webhooks_not_configured", List.of(e.getMessage())));
 
         // Javalin's own errors, such as EndpointNotFound for an unknown route.
         routes.exception(HttpResponseException.class, (e, ctx) -> {

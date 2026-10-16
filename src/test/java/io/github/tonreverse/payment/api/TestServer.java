@@ -33,7 +33,12 @@ public final class TestServer implements AutoCloseable {
     }
 
     public static TestServer start(HealthController health, ProductController products, OrderController orders) {
-        return new TestServer(App.createServer(health, products, orders).start(0));
+        return start(health, products, orders, noWebhooks());
+    }
+
+    public static TestServer start(HealthController health, ProductController products, OrderController orders,
+            StripeWebhookController webhooks) {
+        return new TestServer(App.createServer(health, products, orders, webhooks).start(0));
     }
 
     /** For tests that do not care about health checks. */
@@ -51,6 +56,11 @@ public final class TestServer implements AutoCloseable {
         return new OrderController(new OrderService(new InMemoryProductRepository(), new InMemoryOrderRepository(),
                 new InMemoryIdempotencyKeyRepository(), new DirectTransactions(), new StubPaymentGateway(),
                 Clock.systemUTC(), UUID::randomUUID, OrderService.DEFAULT_LOCK_TIMEOUT));
+    }
+
+    /** For tests that do not send webhooks. */
+    public static StripeWebhookController noWebhooks() {
+        return StripeWebhookController.notConfigured();
     }
 
     public HttpResponse<String> get(String path) throws Exception {
