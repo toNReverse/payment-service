@@ -1,8 +1,10 @@
 package io.github.tonreverse.payment.persistence;
 
+import static io.github.tonreverse.payment.persistence.jooq.Tables.FRAUD_FLAGS;
 import static io.github.tonreverse.payment.persistence.jooq.Tables.IDEMPOTENCY_KEYS;
 import static io.github.tonreverse.payment.persistence.jooq.Tables.ORDERS;
 import static io.github.tonreverse.payment.persistence.jooq.Tables.ORDER_ITEMS;
+import static io.github.tonreverse.payment.persistence.jooq.Tables.PAYMENT_EVENTS;
 import static io.github.tonreverse.payment.persistence.jooq.Tables.PRODUCTS;
 
 import com.zaxxer.hikari.HikariDataSource;
@@ -36,6 +38,8 @@ public final class TestDatabase {
 
     /** Removes what tests created. The seeded catalog stays; test products use ids starting with "test-". */
     public static void deleteTestData() {
+        dsl().deleteFrom(PAYMENT_EVENTS).execute();
+        dsl().deleteFrom(FRAUD_FLAGS).execute();
         dsl().deleteFrom(IDEMPOTENCY_KEYS).execute();
         dsl().deleteFrom(ORDER_ITEMS).execute();
         dsl().deleteFrom(ORDERS).execute();

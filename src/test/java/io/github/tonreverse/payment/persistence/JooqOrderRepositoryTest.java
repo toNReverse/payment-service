@@ -8,9 +8,14 @@ import io.github.tonreverse.payment.domain.Money;
 import io.github.tonreverse.payment.domain.Order;
 import io.github.tonreverse.payment.domain.OrderItem;
 import io.github.tonreverse.payment.domain.OrderStatus;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -56,6 +61,46 @@ class JooqOrderRepositoryTest {
     }
 
     @Test
+    void updatesTheStatusAndTheUpdateTime() {
+        Order pending = Order.create(UUID.randomUUID(), "anna@example.com",
+                        List.of(new OrderItem("pandoro", "Pandoro 1 kg", 1, Money.of(2_600, "EUR"))), CREATED_AT)
+                .startCheckout(new CheckoutSession("cs_test_1", "https://checkout.stripe.com/c/pay/cs_test_1"), CREATED_AT);
+        repository.insert(pending);
+        Order paid = pending.transitionTo(OrderStatus.PAID, CREATED_AT.plusSeconds(30));
+
+        repository.updateStatus(paid);
+
+        assertThat(repository.findById(paid.id())).hasValue(paid);
+    }
+
+    @Test
+    void lockingAnOrderMakesASecondTransactionWaitForTheFirst() throws Exception {
+        // Two webhooks for the same order must not interleave: each reads the order FOR UPDATE.
+        Order order = Order.create(UUID.randomUUID(), "anna@example.com",
+                List.of(new OrderItem("pandoro", "Pandoro 1 kg", 1, Money.of(2_600, "EUR"))), CREATED_AT);
+        repository.insert(order);
+        JooqTransactions transactions = new JooqTransactions(TestDatabase.dsl());
+        CountDownLatch firstHoldsTheLock = new CountDownLatch(1);
+        Duration held = Duration.ofMillis(600);
+
+        try (ExecutorService pool = Executors.newSingleThreadExecutor()) {
+            Future<?> first = pool.submit(() -> transactions.inTransaction(() -> {
+                repository.findByIdForUpdate(order.id());
+                firstHoldsTheLock.countDown();
+                sleep(held);
+            }));
+            firstHoldsTheLock.await();
+
+            long start = System.nanoTime();
+            transactions.inTransaction(() -> assertThat(repository.findByIdForUpdate(order.id())).isPresent());
+            Duration waited = Duration.ofNanos(System.nanoTime() - start);
+
+            first.get();
+            assertThat(waited).isGreaterThan(held.dividedBy(2));
+        }
+    }
+
+    @Test
     void returnsEmptyForAnUnknownId() {
         assertThat(repository.findById(UUID.randomUUID())).isEmpty();
     }
@@ -70,5 +115,14 @@ class JooqOrderRepositoryTest {
 
         assertThatThrownBy(() -> repository.insert(order)).isInstanceOf(DataAccessException.class);
         assertThat(repository.findById(order.id())).isEmpty();
+    }
+
+    private static void sleep(Duration duration) {
+        try {
+            Thread.sleep(duration);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+        }
     }
 }

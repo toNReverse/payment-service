@@ -1,6 +1,7 @@
 package io.github.tonreverse.payment.testing;
 
 import io.github.tonreverse.payment.persistence.Transactions;
+import java.util.function.Supplier;
 
 /**
  * Runs the work with no transaction around it, so nothing is rolled back when it throws. Fine for logic
@@ -11,5 +12,10 @@ public final class DirectTransactions implements Transactions {
     @Override
     public void inTransaction(Runnable work) {
         work.run();
+    }
+
+    @Override
+    public <T> T inTransactionReturning(Supplier<T> work) {
+        return work.get();
     }
 }

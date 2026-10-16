@@ -1,5 +1,6 @@
 package io.github.tonreverse.payment.persistence;
 
+import java.util.function.Supplier;
 import org.jooq.DSLContext;
 
 /**
@@ -19,5 +20,10 @@ public final class JooqTransactions implements Transactions {
     @Override
     public void inTransaction(Runnable work) {
         dsl.transaction(work::run);
+    }
+
+    @Override
+    public <T> T inTransactionReturning(Supplier<T> work) {
+        return dsl.transactionResult(work::get);
     }
 }
