@@ -12,6 +12,8 @@ services:
       DATABASE_USER: payments
       DATABASE_PASSWORD: payments
       REDIS_URL: redis://redis:6379
+      # Read from .env when present (compose substitutes ${...} from it); empty means the fake gateway.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

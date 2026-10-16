@@ -10,6 +10,7 @@ import io.github.tonreverse.payment.health.DatabaseHealthCheck;
 import io.github.tonreverse.payment.health.RedisHealthCheck;
 import io.github.tonreverse.payment.payment.FakePaymentGateway;
 import io.github.tonreverse.payment.payment.PaymentGateway;
+import io.github.tonreverse.payment.payment.StripePaymentGateway;
 import io.github.tonreverse.payment.persistence.Database;
 import io.github.tonreverse.payment.persistence.IdempotencyKeyRepository;
 import io.github.tonreverse.payment.persistence.JooqIdempotencyKeyRepository;
@@ -62,9 +63,8 @@ public final class App {
         IdempotencyKeyRepository idempotencyKeys = new JooqIdempotencyKeyRepository(dsl);
         Transactions transactions = new JooqTransactions(dsl);
 
-        // Payment provider. Replaced by the Stripe gateway in Milestone 5.
-        PaymentGateway paymentGateway = new FakePaymentGateway();
-        log.warn("Using FakePaymentGateway: checkout URLs are placeholders, no payment can be made");
+        // Payment provider.
+        PaymentGateway paymentGateway = paymentGateway(config);
 
         // Services.
         OrderService orderService = new OrderService(productRepository, orderRepository, idempotencyKeys,
@@ -87,6 +87,20 @@ public final class App {
         }, "shutdown"));
 
         server.start(config.port());
+    }
+
+    /**
+     * Stripe when a test-mode key is configured, otherwise a fake. The fake lets the service, CI and
+     * docker compose run without any Stripe account; AppConfig has already refused live keys.
+     */
+    private static PaymentGateway paymentGateway(AppConfig config) {
+        if (config.usesStripe()) {
+            log.info("Payments: Stripe Checkout, test mode");
+            return new StripePaymentGateway(StripePaymentGateway.client(config.stripeSecretKey()),
+                    config.checkoutSuccessUrl(), config.checkoutCancelUrl());
+        }
+        log.warn("STRIPE_SECRET_KEY is not set: using FakePaymentGateway, checkout URLs are placeholders");
+        return new FakePaymentGateway();
     }
 
     /**
