@@ -13,3 +13,6 @@ out/
 
 # macOS
 .DS_Store
+
+# JVM heap dumps (written by any JVM that runs out of memory, e.g. the IDE's Java tooling)
+*.hprof
