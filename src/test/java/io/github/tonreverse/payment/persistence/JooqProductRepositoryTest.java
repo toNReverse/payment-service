@@ -46,6 +46,16 @@ class JooqProductRepositoryTest {
     }
 
     @Test
+    void findsProductsByIdIncludingInactiveOnesAndSkipsUnknownIds() {
+        insertProduct("test-alpha", "Alpha test product", 100, true);
+        insertProduct("test-beta", "Beta test product", 200, false);
+
+        assertThat(repository.findByIds(List.of("test-alpha", "test-beta", "test-missing")))
+                .extracting(Product::id)
+                .containsExactlyInAnyOrder("test-alpha", "test-beta");
+    }
+
+    @Test
     void theSeedMigrationProvidesTheChristmasCatalog() {
         assertThat(repository.findActive())
                 .extracting(Product::id)

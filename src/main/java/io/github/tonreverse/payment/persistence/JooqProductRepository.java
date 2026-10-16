@@ -5,6 +5,7 @@ import static io.github.tonreverse.payment.persistence.jooq.Tables.PRODUCTS;
 import io.github.tonreverse.payment.domain.Money;
 import io.github.tonreverse.payment.domain.Product;
 import io.github.tonreverse.payment.persistence.jooq.tables.records.ProductsRecord;
+import java.util.Collection;
 import java.util.List;
 import org.jooq.DSLContext;
 
@@ -21,6 +22,13 @@ public final class JooqProductRepository implements ProductRepository {
         return dsl.selectFrom(PRODUCTS)
                 .where(PRODUCTS.ACTIVE.isTrue())
                 .orderBy(PRODUCTS.NAME)
+                .fetch(JooqProductRepository::toProduct);
+    }
+
+    @Override
+    public List<Product> findByIds(Collection<String> ids) {
+        return dsl.selectFrom(PRODUCTS)
+                .where(PRODUCTS.ID.in(ids))
                 .fetch(JooqProductRepository::toProduct);
     }
 

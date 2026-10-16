@@ -1,6 +1,7 @@
 package io.github.tonreverse.payment.api;
 
 import io.github.tonreverse.payment.App;
+import io.github.tonreverse.payment.testing.InMemoryProductRepository;
 import io.javalin.Javalin;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -34,7 +35,7 @@ final class TestServer implements AutoCloseable {
 
     /** For tests that do not care about the catalog. */
     static ProductController noProducts() {
-        return new ProductController(List::of);
+        return new ProductController(new InMemoryProductRepository());
     }
 
     HttpResponse<String> get(String path) throws Exception {

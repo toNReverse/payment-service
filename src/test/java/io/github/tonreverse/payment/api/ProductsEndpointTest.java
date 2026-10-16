@@ -6,8 +6,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.github.tonreverse.payment.domain.Money;
 import io.github.tonreverse.payment.domain.Product;
+import io.github.tonreverse.payment.testing.InMemoryProductRepository;
 import java.net.http.HttpResponse;
-import java.util.List;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 
@@ -19,11 +19,11 @@ class ProductsEndpointTest {
 
     @Test
     void listsTheCatalogWithPricesInMinorUnits() throws Exception {
-        List<Product> catalog = List.of(
+        InMemoryProductRepository catalog = new InMemoryProductRepository(
                 new Product("pandoro", "Pandoro 1 kg", Money.of(2_600, "EUR"), true),
                 new Product("panettone-classico", "Panettone Classico 1 kg", Money.of(2_800, "EUR"), true));
 
-        try (TestServer server = TestServer.start(noHealthChecks(), new ProductController(() -> catalog))) {
+        try (TestServer server = TestServer.start(noHealthChecks(), new ProductController(catalog))) {
             HttpResponse<String> response = server.get("/products");
 
             assertThat(response.statusCode()).isEqualTo(200);
@@ -40,7 +40,7 @@ class ProductsEndpointTest {
 
     @Test
     void returnsAnEmptyListWhenNothingIsOnSale() throws Exception {
-        try (TestServer server = TestServer.start(noHealthChecks(), new ProductController(List::of))) {
+        try (TestServer server = TestServer.start(noHealthChecks(), new ProductController(new InMemoryProductRepository()))) {
             HttpResponse<String> response = server.get("/products");
 
             assertThat(response.statusCode()).isEqualTo(200);

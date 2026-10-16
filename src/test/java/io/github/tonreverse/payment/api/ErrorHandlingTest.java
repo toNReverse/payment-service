@@ -5,7 +5,11 @@ import static io.github.tonreverse.payment.api.TestServer.noHealthChecks;
 import static io.github.tonreverse.payment.api.TestServer.noProducts;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.github.tonreverse.payment.domain.Product;
+import io.github.tonreverse.payment.persistence.ProductRepository;
 import java.net.http.HttpResponse;
+import java.util.Collection;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 
@@ -28,8 +32,16 @@ class ErrorHandlingTest {
 
     @Test
     void unexpectedErrorsBecomeA500WithoutInternalDetails() throws Exception {
-        ProductController failing = new ProductController(() -> {
-            throw new IllegalStateException("connection to db-internal-7:5432 refused for user payments");
+        ProductController failing = new ProductController(new ProductRepository() {
+            @Override
+            public List<Product> findActive() {
+                throw new IllegalStateException("connection to db-internal-7:5432 refused for user payments");
+            }
+
+            @Override
+            public List<Product> findByIds(Collection<String> ids) {
+                return List.of();
+            }
         });
 
         try (TestServer server = TestServer.start(noHealthChecks(), failing)) {
