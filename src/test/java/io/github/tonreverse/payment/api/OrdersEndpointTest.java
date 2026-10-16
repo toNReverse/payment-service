@@ -77,6 +77,7 @@ class OrdersEndpointTest {
             assertThat(body.path("total").path("currency").stringValue()).isEqualTo("EUR");
             JsonNode firstItem = body.path("items").get(0);
             assertThat(firstItem.path("productId").stringValue()).isEqualTo("pandoro");
+            assertThat(firstItem.path("productName").stringValue()).isEqualTo("Pandoro 1 kg");
             assertThat(firstItem.path("quantity").intValue()).isEqualTo(2);
             assertThat(firstItem.path("unitPrice").path("amountMinor").longValue()).isEqualTo(2_600);
             assertThat(firstItem.path("lineTotal").path("amountMinor").longValue()).isEqualTo(5_200);

@@ -55,6 +55,6 @@ class JooqTransactionsTest {
 
     private static Order newOrder() {
         return Order.create(UUID.randomUUID(), "anna@example.com",
-                List.of(new OrderItem("pandoro", 1, Money.of(2_600, "EUR"))), NOW);
+                List.of(new OrderItem("pandoro", "Pandoro 1 kg", 1, Money.of(2_600, "EUR"))), NOW);
     }
 }

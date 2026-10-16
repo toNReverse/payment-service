@@ -19,7 +19,7 @@ class OrderTest {
             new CheckoutSession("cs_test_a1b2c3", "https://checkout.stripe.com/c/pay/cs_test_a1b2c3");
 
     private static OrderItem item(String productId, int quantity, long unitPriceMinor) {
-        return new OrderItem(productId, quantity, Money.of(unitPriceMinor, "EUR"));
+        return new OrderItem(productId, "Name of " + productId, quantity, Money.of(unitPriceMinor, "EUR"));
     }
 
     @Nested
@@ -40,6 +40,13 @@ class OrderTest {
         @Test
         void productIdIsRequired() {
             assertThatThrownBy(() -> item(" ", 1, 2_800)).isInstanceOf(IllegalArgumentException.class);
+        }
+
+        @Test
+        void productNameIsRequired() {
+            // Stored with the item, like the unit price: what the customer saw when buying.
+            assertThatThrownBy(() -> new OrderItem("pandoro", " ", 1, Money.of(2_600, "EUR")))
+                    .isInstanceOf(IllegalArgumentException.class);
         }
     }
 
@@ -79,7 +86,7 @@ class OrderTest {
         @Test
         void refusesItemsInDifferentCurrencies() {
             List<OrderItem> items = List.of(
-                    item("pandoro", 1, 2_600), new OrderItem("panettone-classico", 1, Money.of(3_000, "USD")));
+                    item("pandoro", 1, 2_600), new OrderItem("panettone-classico", "Panettone Classico 1 kg", 1, Money.of(3_000, "USD")));
 
             assertThatThrownBy(() -> Order.create(ID, "anna@example.com", items, CREATED_AT))
                     .isInstanceOf(IllegalArgumentException.class);

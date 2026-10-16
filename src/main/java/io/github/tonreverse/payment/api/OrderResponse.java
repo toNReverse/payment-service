@@ -23,10 +23,11 @@ record OrderResponse(
         Instant createdAt,
         Instant updatedAt) {
 
-    record ItemResponse(String productId, int quantity, MoneyResponse unitPrice, MoneyResponse lineTotal) {
+    record ItemResponse(
+            String productId, String productName, int quantity, MoneyResponse unitPrice, MoneyResponse lineTotal) {
 
         static ItemResponse from(OrderItem item) {
-            return new ItemResponse(item.productId(), item.quantity(),
+            return new ItemResponse(item.productId(), item.productName(), item.quantity(),
                     MoneyResponse.from(item.unitPrice()), MoneyResponse.from(item.lineTotal()));
         }
     }

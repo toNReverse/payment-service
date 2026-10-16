@@ -132,7 +132,7 @@ class JooqIdempotencyKeyRepositoryTest {
 
     private UUID insertOrder() {
         Order order = Order.create(UUID.randomUUID(), "anna@example.com",
-                List.of(new OrderItem("pandoro", 1, Money.of(2_600, "EUR"))), T0);
+                List.of(new OrderItem("pandoro", "Pandoro 1 kg", 1, Money.of(2_600, "EUR"))), T0);
         orders.insert(order);
         return order.id();
     }

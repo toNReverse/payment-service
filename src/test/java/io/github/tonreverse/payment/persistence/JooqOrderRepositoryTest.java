@@ -33,8 +33,8 @@ class JooqOrderRepositoryTest {
     void savesAnOrderWithItsItemsAndLoadsItBack() {
         // Items are listed in product-id order, the order the repository loads them in.
         Order order = Order.create(UUID.randomUUID(), "anna@example.com", List.of(
-                new OrderItem("pandoro", 1, Money.of(2_600, "EUR")),
-                new OrderItem("panettone-classico", 2, Money.of(2_800, "EUR"))), CREATED_AT);
+                new OrderItem("pandoro", "Pandoro 1 kg", 1, Money.of(2_600, "EUR")),
+                new OrderItem("panettone-classico", "Panettone Classico 1 kg", 2, Money.of(2_800, "EUR"))), CREATED_AT);
 
         repository.insert(order);
 
@@ -45,7 +45,7 @@ class JooqOrderRepositoryTest {
     void keepsStatusCheckoutSessionAndBothTimestamps() {
         Instant updatedAt = CREATED_AT.plusSeconds(90);
         Order order = new Order(UUID.randomUUID(), "anna@example.com",
-                List.of(new OrderItem("pandoro", 1, Money.of(2_600, "EUR"))), Money.of(2_600, "EUR"),
+                List.of(new OrderItem("pandoro", "Pandoro 1 kg", 1, Money.of(2_600, "EUR"))), Money.of(2_600, "EUR"),
                 OrderStatus.PENDING_PAYMENT,
                 new CheckoutSession("cs_test_a1b2c3", "https://checkout.stripe.com/c/pay/cs_test_a1b2c3"),
                 CREATED_AT, updatedAt);
@@ -65,8 +65,8 @@ class JooqOrderRepositoryTest {
         // The second item references a product that does not exist, so its insert violates the foreign key.
         // The order row was inserted first and must be rolled back with it.
         Order order = Order.create(UUID.randomUUID(), "anna@example.com", List.of(
-                new OrderItem("pandoro", 1, Money.of(2_600, "EUR")),
-                new OrderItem("test-does-not-exist", 1, Money.of(1_000, "EUR"))), CREATED_AT);
+                new OrderItem("pandoro", "Pandoro 1 kg", 1, Money.of(2_600, "EUR")),
+                new OrderItem("test-does-not-exist", "Does not exist", 1, Money.of(1_000, "EUR"))), CREATED_AT);
 
         assertThatThrownBy(() -> repository.insert(order)).isInstanceOf(DataAccessException.class);
         assertThat(repository.findById(order.id())).isEmpty();

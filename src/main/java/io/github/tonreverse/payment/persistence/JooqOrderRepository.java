@@ -45,10 +45,11 @@ public final class JooqOrderRepository implements OrderRepository {
                     .execute();
 
             // All items in a single multi-row INSERT.
-            var items = dsl.insertInto(ORDER_ITEMS,
-                    ORDER_ITEMS.ORDER_ID, ORDER_ITEMS.PRODUCT_ID, ORDER_ITEMS.QUANTITY, ORDER_ITEMS.UNIT_PRICE_MINOR);
+            var items = dsl.insertInto(ORDER_ITEMS, ORDER_ITEMS.ORDER_ID, ORDER_ITEMS.PRODUCT_ID,
+                    ORDER_ITEMS.PRODUCT_NAME, ORDER_ITEMS.QUANTITY, ORDER_ITEMS.UNIT_PRICE_MINOR);
             for (OrderItem item : order.items()) {
-                items = items.values(order.id(), item.productId(), item.quantity(), item.unitPrice().amountMinor());
+                items = items.values(order.id(), item.productId(), item.productName(), item.quantity(),
+                        item.unitPrice().amountMinor());
             }
             items.execute();
         });
@@ -66,8 +67,8 @@ public final class JooqOrderRepository implements OrderRepository {
         List<OrderItem> items = dsl.selectFrom(ORDER_ITEMS)
                 .where(ORDER_ITEMS.ORDER_ID.eq(id))
                 .orderBy(ORDER_ITEMS.PRODUCT_ID)
-                .fetch(item -> new OrderItem(
-                        item.getProductId(), item.getQuantity(), new Money(item.getUnitPriceMinor(), currency)));
+                .fetch(item -> new OrderItem(item.getProductId(), item.getProductName(), item.getQuantity(),
+                        new Money(item.getUnitPriceMinor(), currency)));
 
         // The Order constructor re-checks every invariant, so a corrupted row fails loudly here.
         return Optional.of(new Order(

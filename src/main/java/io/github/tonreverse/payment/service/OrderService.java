@@ -172,7 +172,7 @@ public final class OrderService {
             if (product == null || !product.active()) {
                 problems.add("product '" + line.productId() + "' is not for sale");
             } else {
-                items.add(new OrderItem(product.id(), line.quantity(), product.price()));
+                items.add(new OrderItem(product.id(), product.name(), line.quantity(), product.price()));
             }
         }
         if (items.stream().map(item -> item.unitPrice().currency()).distinct().count() > 1) {

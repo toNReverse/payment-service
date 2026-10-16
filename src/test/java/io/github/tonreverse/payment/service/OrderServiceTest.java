@@ -63,8 +63,8 @@ class OrderServiceTest {
             assertThat(result.replayed()).isFalse();
             assertThat(order.status()).isEqualTo(OrderStatus.PENDING_PAYMENT);
             assertThat(order.items()).containsExactly(
-                    new OrderItem("pandoro", 2, Money.of(2_600, "EUR")),
-                    new OrderItem("panettone-classico", 1, Money.of(2_800, "EUR")));
+                    new OrderItem("pandoro", "Pandoro 1 kg", 2, Money.of(2_600, "EUR")),
+                    new OrderItem("panettone-classico", "Panettone Classico 1 kg", 1, Money.of(2_800, "EUR")));
             assertThat(order.total()).isEqualTo(Money.of(8_000, "EUR"));
             assertThat(order.checkoutSession()).isEqualTo(StubPaymentGateway.sessionFor(order));
             assertThat(orders.findById(order.id())).hasValue(order);
