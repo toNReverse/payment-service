@@ -15,6 +15,7 @@ import java.util.Set;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -83,6 +84,32 @@ class OrderStatusTest {
                     assertThat(rejection.from()).isEqualTo(PAID);
                     assertThat(rejection.to()).isEqualTo(PENDING_PAYMENT);
                 });
+    }
+
+    /** Used to tell a webhook that arrives too early (retry later) from one that no longer applies. */
+    @ParameterizedTest(name = "{0} can later become {1}: {2}")
+    @CsvSource({
+            "CREATED, PAID, true",
+            "CREATED, REFUNDED, true",
+            "PENDING_PAYMENT, REFUNDED, true",
+            "PENDING_PAYMENT, PAID, true",
+            "PAID, EXPIRED, false",
+            "PAID, FAILED, false",
+            "PAID, PAID, false",
+            "EXPIRED, PAID, false",
+            "FLAGGED, PAID, false",
+            "REFUNDED, PAID, false"
+    })
+    void knowsWhichStatusesCanStillBeReached(OrderStatus from, OrderStatus target, boolean reachable) {
+        assertThat(from.canEventuallyReach(target)).isEqualTo(reachable);
+    }
+
+    @ParameterizedTest
+    @EnumSource(names = {"FAILED", "EXPIRED", "REFUNDED", "FLAGGED"})
+    void terminalStatusesReachNothing(OrderStatus status) {
+        for (OrderStatus target : OrderStatus.values()) {
+            assertThat(status.canEventuallyReach(target)).isFalse();
+        }
     }
 
     @ParameterizedTest
