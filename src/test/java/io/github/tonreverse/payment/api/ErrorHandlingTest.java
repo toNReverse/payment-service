@@ -1,6 +1,7 @@
 package io.github.tonreverse.payment.api;
 
 import static io.github.tonreverse.payment.api.TestServer.json;
+import static io.github.tonreverse.payment.api.TestServer.noOrders;
 import static io.github.tonreverse.payment.api.TestServer.noHealthChecks;
 import static io.github.tonreverse.payment.api.TestServer.noProducts;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -18,7 +19,7 @@ class ErrorHandlingTest {
 
     @Test
     void unknownRoutesGetAJson404() throws Exception {
-        try (TestServer server = TestServer.start(noHealthChecks(), noProducts())) {
+        try (TestServer server = TestServer.start(noHealthChecks(), noProducts(), noOrders())) {
             HttpResponse<String> response = server.get("/does-not-exist");
 
             assertThat(response.statusCode()).isEqualTo(404);
@@ -44,7 +45,7 @@ class ErrorHandlingTest {
             }
         });
 
-        try (TestServer server = TestServer.start(noHealthChecks(), failing)) {
+        try (TestServer server = TestServer.start(noHealthChecks(), failing, noOrders())) {
             HttpResponse<String> response = server.get("/products");
 
             assertThat(response.statusCode()).isEqualTo(500);

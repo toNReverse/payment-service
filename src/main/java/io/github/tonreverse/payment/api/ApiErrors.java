@@ -1,5 +1,8 @@
 package io.github.tonreverse.payment.api;
 
+import io.github.tonreverse.payment.payment.PaymentGatewayException;
+import io.github.tonreverse.payment.service.IdempotencyKeyInUseException;
+import io.github.tonreverse.payment.service.IdempotencyKeyReusedException;
 import io.github.tonreverse.payment.service.NotFoundException;
 import io.github.tonreverse.payment.service.ValidationException;
 import io.javalin.config.RoutesConfig;
@@ -30,6 +33,21 @@ public final class ApiErrors {
                 (e, ctx) -> respond(ctx, HttpStatus.BAD_REQUEST, "validation_failed", e.details()));
         routes.exception(NotFoundException.class,
                 (e, ctx) -> respond(ctx, HttpStatus.NOT_FOUND, "not_found", List.of(e.getMessage())));
+
+        // Idempotency (see docs/decisions.md). 422 and 409 follow the IETF Idempotency-Key draft.
+        routes.exception(IdempotencyKeyReusedException.class, (e, ctx) ->
+                respond(ctx, HttpStatus.UNPROCESSABLE_CONTENT, "idempotency_key_reused", List.of(e.getMessage())));
+        routes.exception(IdempotencyKeyInUseException.class, (e, ctx) -> {
+            ctx.header("Retry-After", "1");
+            respond(ctx, HttpStatus.CONFLICT, "idempotency_key_in_use", List.of(e.getMessage()));
+        });
+
+        // The provider's own message may name hosts or contain request ids: log it, do not return it.
+        routes.exception(PaymentGatewayException.class, (e, ctx) -> {
+            log.warn("Payment provider failed on {} {}", ctx.method(), ctx.path(), e);
+            respond(ctx, HttpStatus.BAD_GATEWAY, "payment_provider_unavailable",
+                    List.of("The payment provider could not be reached. Retry with the same Idempotency-Key."));
+        });
 
         // Javalin's own errors, such as EndpointNotFound for an unknown route.
         routes.exception(HttpResponseException.class, (e, ctx) -> {

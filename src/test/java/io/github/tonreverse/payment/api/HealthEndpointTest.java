@@ -1,6 +1,7 @@
 package io.github.tonreverse.payment.api;
 
 import static io.github.tonreverse.payment.api.TestServer.json;
+import static io.github.tonreverse.payment.api.TestServer.noOrders;
 import static io.github.tonreverse.payment.api.TestServer.noProducts;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -42,7 +43,7 @@ class HealthEndpointTest {
     }
 
     private static TestServer startWith(HealthCheck... checks) {
-        return TestServer.start(new HealthController(List.of(checks)), noProducts());
+        return TestServer.start(new HealthController(List.of(checks)), noProducts(), noOrders());
     }
 
     private static HealthCheck fakeCheck(String name, boolean healthy) {

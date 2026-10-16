@@ -1,6 +1,7 @@
 package io.github.tonreverse.payment.api;
 
 import static io.github.tonreverse.payment.api.TestServer.json;
+import static io.github.tonreverse.payment.api.TestServer.noOrders;
 import static io.github.tonreverse.payment.api.TestServer.noHealthChecks;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -23,7 +24,7 @@ class ProductsEndpointTest {
                 new Product("pandoro", "Pandoro 1 kg", Money.of(2_600, "EUR"), true),
                 new Product("panettone-classico", "Panettone Classico 1 kg", Money.of(2_800, "EUR"), true));
 
-        try (TestServer server = TestServer.start(noHealthChecks(), new ProductController(catalog))) {
+        try (TestServer server = TestServer.start(noHealthChecks(), new ProductController(catalog), noOrders())) {
             HttpResponse<String> response = server.get("/products");
 
             assertThat(response.statusCode()).isEqualTo(200);
@@ -40,7 +41,7 @@ class ProductsEndpointTest {
 
     @Test
     void returnsAnEmptyListWhenNothingIsOnSale() throws Exception {
-        try (TestServer server = TestServer.start(noHealthChecks(), new ProductController(new InMemoryProductRepository()))) {
+        try (TestServer server = TestServer.start(noHealthChecks(), new ProductController(new InMemoryProductRepository()), noOrders())) {
             HttpResponse<String> response = server.get("/products");
 
             assertThat(response.statusCode()).isEqualTo(200);
