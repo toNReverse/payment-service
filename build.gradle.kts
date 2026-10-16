@@ -27,6 +27,7 @@ dependencies {
     implementation(libs.jedis)
     implementation(libs.flyway.core)
     implementation(libs.jooq)
+    implementation(libs.stripe.java)
     // jOOQ's Settings class carries JAXB annotations. Without their definitions javac warns while reading
     // it, and -Werror turns that into an error. Only the compiler needs them, so nothing ships at runtime.
     compileOnly(libs.jakarta.xml.bind.api)
