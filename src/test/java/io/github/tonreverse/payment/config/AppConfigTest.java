@@ -76,6 +76,87 @@ class AppConfigTest {
     }
 
     @Test
+    void withoutAStripeKeyTheFakeGatewayIsUsed() {
+        AppConfig config = AppConfig.from(validEnv());
+
+        assertThat(config.stripeSecretKey()).isNull();
+        assertThat(config.usesStripe()).isFalse();
+    }
+
+    @Test
+    void acceptsStripeTestModeSecretAndRestrictedKeys() {
+        for (String key : new String[] {"sk_test_51abcDEF", "rk_test_51abcDEF"}) {
+            Map<String, String> env = validEnv();
+            env.put("STRIPE_SECRET_KEY", key);
+
+            AppConfig config = AppConfig.from(env);
+
+            assertThat(config.stripeSecretKey()).isEqualTo(key);
+            assertThat(config.usesStripe()).isTrue();
+        }
+    }
+
+    @Test
+    void refusesLiveKeysWithoutRepeatingThemInTheError() {
+        // This service only ever talks to Stripe in test mode, so a live key is always a mistake.
+        Map<String, String> env = validEnv();
+        env.put("STRIPE_SECRET_KEY", "sk_live_51liveSECRETvalue");
+
+        assertThatThrownBy(() -> AppConfig.from(env))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("test-mode")
+                .hasMessageNotContaining("liveSECRETvalue");
+    }
+
+    @Test
+    void refusesAPublishableKeyInPlaceOfTheSecretKey() {
+        Map<String, String> env = validEnv();
+        env.put("STRIPE_SECRET_KEY", "pk_test_51abcDEF");
+
+        assertThatThrownBy(() -> AppConfig.from(env))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("STRIPE_SECRET_KEY");
+    }
+
+    @Test
+    void checkoutReturnUrlsDefaultToTheOrderOnThisService() {
+        AppConfig config = AppConfig.from(validEnv());
+
+        assertThat(config.checkoutSuccessUrl()).isEqualTo("http://localhost:9090/orders/{ORDER_ID}");
+        assertThat(config.checkoutCancelUrl()).isEqualTo("http://localhost:9090/orders/{ORDER_ID}");
+    }
+
+    @Test
+    void readsCheckoutReturnUrls() {
+        Map<String, String> env = validEnv();
+        env.put("CHECKOUT_SUCCESS_URL", "https://shop.example/grazie?order={ORDER_ID}");
+        env.put("CHECKOUT_CANCEL_URL", "https://shop.example/carrello");
+
+        AppConfig config = AppConfig.from(env);
+
+        assertThat(config.checkoutSuccessUrl()).isEqualTo("https://shop.example/grazie?order={ORDER_ID}");
+        assertThat(config.checkoutCancelUrl()).isEqualTo("https://shop.example/carrello");
+    }
+
+    @Test
+    void checkoutReturnUrlsMustBeAbsoluteHttpUrls() {
+        Map<String, String> env = validEnv();
+        env.put("CHECKOUT_SUCCESS_URL", "/grazie");
+
+        assertThatThrownBy(() -> AppConfig.from(env))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("CHECKOUT_SUCCESS_URL");
+    }
+
+    @Test
+    void toStringShowsOnlyTheModeOfTheStripeKey() {
+        Map<String, String> env = validEnv();
+        env.put("STRIPE_SECRET_KEY", "sk_test_51abcDEFsecretPART");
+
+        assertThat(AppConfig.from(env).toString()).contains("sk_test_****").doesNotContain("secretPART");
+    }
+
+    @Test
     void toStringDoesNotLeakThePassword() {
         assertThat(AppConfig.from(validEnv()).toString()).doesNotContain("s3cret");
     }
