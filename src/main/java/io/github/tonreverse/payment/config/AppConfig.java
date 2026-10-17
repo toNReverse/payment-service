@@ -1,7 +1,9 @@
 package io.github.tonreverse.payment.config;
 
+import io.github.tonreverse.payment.domain.Money;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +21,8 @@ import java.util.Map;
  * @param checkoutCancelUrl where Stripe sends the customer who leaves the checkout page
  * @param stripeWebhookSecret the signing secret of the webhook endpoint (whsec_...), or null if this
  *     instance does not receive webhooks
+ * @param fraud thresholds of the fraud rules, with defaults suited to a small seasonal shop
+ * @param orderRateLimit how many POST /orders one client IP may send
  */
 public record AppConfig(
         int port,
@@ -29,7 +33,9 @@ public record AppConfig(
         String stripeSecretKey,
         String checkoutSuccessUrl,
         String checkoutCancelUrl,
-        String stripeWebhookSecret) {
+        String stripeWebhookSecret,
+        FraudSettings fraud,
+        RateLimitSettings orderRateLimit) {
 
     public static final String ORDER_ID_PLACEHOLDER = "{ORDER_ID}";
     static final int DEFAULT_PORT = 8080;
@@ -48,12 +54,19 @@ public record AppConfig(
         String checkoutSuccessUrl = httpUrl(env, "CHECKOUT_SUCCESS_URL", orderPage, errors);
         String checkoutCancelUrl = httpUrl(env, "CHECKOUT_CANCEL_URL", orderPage, errors);
         String stripeWebhookSecret = webhookSecret(env.get("STRIPE_WEBHOOK_SECRET"), errors);
+        FraudSettings fraud = new FraudSettings(
+                Money.of(positive(env, "FRAUD_MAX_ORDER_TOTAL_CENTS", 50_000, errors), "EUR"),
+                (int) positive(env, "FRAUD_MAX_QUANTITY_PER_PRODUCT", 20, errors),
+                (int) positive(env, "FRAUD_MAX_ORDERS_PER_EMAIL", 3, errors),
+                Duration.ofMinutes(positive(env, "FRAUD_ORDERS_PER_EMAIL_WINDOW_MINUTES", 60, errors)));
+        RateLimitSettings orderRateLimit = new RateLimitSettings(
+                (int) positive(env, "RATE_LIMIT_ORDERS_PER_MINUTE", 10, errors), Duration.ofMinutes(1));
 
         if (!errors.isEmpty()) {
             throw new IllegalStateException("Invalid configuration: " + String.join("; ", errors));
         }
         return new AppConfig(port, databaseUrl, databaseUser, databasePassword, redisUrl,
-                stripeSecretKey, checkoutSuccessUrl, checkoutCancelUrl, stripeWebhookSecret);
+                stripeSecretKey, checkoutSuccessUrl, checkoutCancelUrl, stripeWebhookSecret, fraud, orderRateLimit);
     }
 
     public boolean usesStripe() {
@@ -105,6 +118,24 @@ public record AppConfig(
         return key;
     }
 
+    /** Optional, with a default; when set, a whole number from 1 to Integer.MAX_VALUE. */
+    private static long positive(Map<String, String> env, String name, long defaultValue, List<String> errors) {
+        String value = env.get(name);
+        if (value == null || value.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            long parsed = Long.parseLong(value.strip());
+            if (parsed >= 1 && parsed <= Integer.MAX_VALUE) {
+                return parsed;
+            }
+        } catch (NumberFormatException ignored) {
+            // reported below
+        }
+        errors.add(name + " must be a positive whole number, got '" + value + "'");
+        return defaultValue;
+    }
+
     /** Optional; shown by the Stripe CLI (stripe listen) or in the Dashboard for each endpoint. */
     private static String webhookSecret(String value, List<String> errors) {
         if (value == null || value.isBlank()) {
@@ -141,11 +172,13 @@ public record AppConfig(
     @Override
     public String toString() {
         return ("AppConfig[port=%d, databaseUrl=%s, databaseUser=%s, databasePassword=****, redisUrl=%s, "
-                + "stripeSecretKey=%s, checkoutSuccessUrl=%s, checkoutCancelUrl=%s, stripeWebhookSecret=%s]")
+                + "stripeSecretKey=%s, checkoutSuccessUrl=%s, checkoutCancelUrl=%s, stripeWebhookSecret=%s, "
+                + "fraud=%s, orderRateLimit=%s]")
                 .formatted(port, databaseUrl, databaseUser, maskUserInfo(redisUrl),
                         stripeSecretKey == null ? "not set (fake gateway)" : stripeSecretKey.substring(0, 8) + "****",
                         checkoutSuccessUrl, checkoutCancelUrl,
-                        stripeWebhookSecret == null ? "not set (webhooks disabled)" : "whsec_****");
+                        stripeWebhookSecret == null ? "not set (webhooks disabled)" : "whsec_****",
+                        fraud, orderRateLimit);
     }
 
     /** redis://user:password@host:6379 becomes redis://****@host:6379. */

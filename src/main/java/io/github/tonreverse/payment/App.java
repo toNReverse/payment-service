@@ -8,6 +8,10 @@ import io.github.tonreverse.payment.api.OrderRateLimitFilter;
 import io.github.tonreverse.payment.api.ProductController;
 import io.github.tonreverse.payment.api.StripeWebhookController;
 import io.github.tonreverse.payment.config.AppConfig;
+import io.github.tonreverse.payment.config.FraudSettings;
+import io.github.tonreverse.payment.fraud.OrderTotalRule;
+import io.github.tonreverse.payment.fraud.OrdersPerEmailRule;
+import io.github.tonreverse.payment.fraud.QuantityPerProductRule;
 import io.github.tonreverse.payment.health.DatabaseHealthCheck;
 import io.github.tonreverse.payment.health.RedisHealthCheck;
 import io.github.tonreverse.payment.payment.FakePaymentGateway;
@@ -29,6 +33,7 @@ import io.github.tonreverse.payment.persistence.ProductRepository;
 import io.github.tonreverse.payment.persistence.Transactions;
 import io.github.tonreverse.payment.ratelimit.FixedWindowRateLimiter;
 import io.github.tonreverse.payment.ratelimit.RedisWindowCounter;
+import io.github.tonreverse.payment.ratelimit.WindowCounter;
 import io.github.tonreverse.payment.service.FraudService;
 import io.github.tonreverse.payment.service.OrderService;
 import io.github.tonreverse.payment.service.PaymentEventService;
@@ -36,7 +41,6 @@ import io.javalin.Javalin;
 import io.javalin.json.JavalinJackson3;
 import java.net.URI;
 import java.time.Clock;
-import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import org.jooq.DSLContext;
@@ -68,6 +72,8 @@ public final class App {
         Database.migrate(dataSource);
         DSLContext dsl = Database.createDsl(dataSource);
         RedisClient redis = RedisClient.create(URI.create(config.redisUrl()));
+        // Fixed-window counters in Redis, shared by the rate limiter and the orders-per-email fraud rule.
+        WindowCounter windowCounter = new RedisWindowCounter(redis, Clock.systemUTC());
 
         // Repositories and transactions.
         ProductRepository productRepository = new JooqProductRepository(dsl);
@@ -82,7 +88,7 @@ public final class App {
 
         // Services.
         OrderService orderService = new OrderService(productRepository, orderRepository, idempotencyKeys,
-                fraudFlagRepository, transactions, paymentGateway, FraudService.none(), Clock.systemUTC(),
+                fraudFlagRepository, transactions, paymentGateway, fraudService(config, windowCounter), Clock.systemUTC(),
                 UUID::randomUUID, OrderService.DEFAULT_LOCK_TIMEOUT);
         PaymentEventService paymentEvents = new PaymentEventService(orderRepository, paymentEventRepository,
                 fraudFlagRepository, transactions, Clock.systemUTC(), UUID::randomUUID);
@@ -95,8 +101,8 @@ public final class App {
         OrderController orders = new OrderController(orderService);
         StripeWebhookController webhooks = webhookController(config, paymentEvents);
 
-        OrderRateLimitFilter orderRateLimit = new OrderRateLimitFilter(new FixedWindowRateLimiter(
-                "orders", new RedisWindowCounter(redis, Clock.systemUTC()), 10, Duration.ofMinutes(1), Clock.systemUTC()));
+        OrderRateLimitFilter orderRateLimit = new OrderRateLimitFilter(new FixedWindowRateLimiter("orders", windowCounter,
+                config.orderRateLimit().maxRequests(), config.orderRateLimit().window(), Clock.systemUTC()));
 
         Javalin server = createServer(health, products, orders, webhooks, orderRateLimit);
 
@@ -122,6 +128,15 @@ public final class App {
         }
         log.warn("STRIPE_SECRET_KEY is not set: using FakePaymentGateway, checkout URLs are placeholders");
         return new FakePaymentGateway();
+    }
+
+    /** Every rule from the brief; thresholds from the environment (see AppConfig). */
+    private static FraudService fraudService(AppConfig config, WindowCounter windowCounter) {
+        FraudSettings fraud = config.fraud();
+        return new FraudService(List.of(
+                new OrderTotalRule(fraud.maxOrderTotal()),
+                new QuantityPerProductRule(fraud.maxQuantityPerProduct()),
+                new OrdersPerEmailRule(windowCounter, fraud.maxOrdersPerEmail(), fraud.ordersPerEmailWindow())));
     }
 
     /** Without a signing secret, events cannot be verified, so the endpoint refuses them all (503). */
