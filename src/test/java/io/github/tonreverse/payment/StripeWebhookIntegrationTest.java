@@ -19,6 +19,7 @@ import io.github.tonreverse.payment.persistence.JooqPaymentEventRepository;
 import io.github.tonreverse.payment.persistence.JooqProductRepository;
 import io.github.tonreverse.payment.persistence.JooqTransactions;
 import io.github.tonreverse.payment.persistence.TestDatabase;
+import io.github.tonreverse.payment.service.FraudService;
 import io.github.tonreverse.payment.service.OrderService;
 import io.github.tonreverse.payment.service.PaymentEventService;
 import io.github.tonreverse.payment.testing.StubPaymentGateway;
@@ -46,8 +47,9 @@ class StripeWebhookIntegrationTest {
     private final JooqOrderRepository orders = new JooqOrderRepository(dsl);
     private final JooqTransactions transactions = new JooqTransactions(dsl);
     private final OrderService orderService = new OrderService(new JooqProductRepository(dsl), orders,
-            new JooqIdempotencyKeyRepository(dsl), transactions, new StubPaymentGateway(), Clock.systemUTC(),
-            UUID::randomUUID, OrderService.DEFAULT_LOCK_TIMEOUT);
+            new JooqIdempotencyKeyRepository(dsl), new JooqFraudFlagRepository(dsl), transactions,
+            new StubPaymentGateway(), FraudService.none(), Clock.systemUTC(), UUID::randomUUID,
+            OrderService.DEFAULT_LOCK_TIMEOUT);
     private final PaymentEventService paymentEvents = new PaymentEventService(orders, new JooqPaymentEventRepository(dsl),
             new JooqFraudFlagRepository(dsl), transactions, Clock.systemUTC(), UUID::randomUUID);
     private final TestServer server = TestServer.start(noHealthChecks(), noProducts(), new OrderController(orderService),

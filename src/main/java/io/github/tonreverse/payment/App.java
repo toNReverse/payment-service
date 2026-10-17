@@ -29,6 +29,7 @@ import io.github.tonreverse.payment.persistence.ProductRepository;
 import io.github.tonreverse.payment.persistence.Transactions;
 import io.github.tonreverse.payment.ratelimit.FixedWindowRateLimiter;
 import io.github.tonreverse.payment.ratelimit.RedisWindowCounter;
+import io.github.tonreverse.payment.service.FraudService;
 import io.github.tonreverse.payment.service.OrderService;
 import io.github.tonreverse.payment.service.PaymentEventService;
 import io.javalin.Javalin;
@@ -81,7 +82,8 @@ public final class App {
 
         // Services.
         OrderService orderService = new OrderService(productRepository, orderRepository, idempotencyKeys,
-                transactions, paymentGateway, Clock.systemUTC(), UUID::randomUUID, OrderService.DEFAULT_LOCK_TIMEOUT);
+                fraudFlagRepository, transactions, paymentGateway, FraudService.none(), Clock.systemUTC(),
+                UUID::randomUUID, OrderService.DEFAULT_LOCK_TIMEOUT);
         PaymentEventService paymentEvents = new PaymentEventService(orderRepository, paymentEventRepository,
                 fraudFlagRepository, transactions, Clock.systemUTC(), UUID::randomUUID);
 

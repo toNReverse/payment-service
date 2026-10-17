@@ -7,10 +7,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.github.tonreverse.payment.domain.Money;
 import io.github.tonreverse.payment.domain.Product;
+import io.github.tonreverse.payment.fraud.QuantityPerProductRule;
 import io.github.tonreverse.payment.payment.PaymentGatewayException;
 import io.github.tonreverse.payment.service.CreateOrderCommand;
+import io.github.tonreverse.payment.service.FraudService;
 import io.github.tonreverse.payment.service.OrderService;
 import io.github.tonreverse.payment.testing.DirectTransactions;
+import io.github.tonreverse.payment.testing.InMemoryFraudFlagRepository;
 import io.github.tonreverse.payment.testing.InMemoryIdempotencyKeyRepository;
 import io.github.tonreverse.payment.testing.InMemoryOrderRepository;
 import io.github.tonreverse.payment.testing.InMemoryProductRepository;
@@ -45,8 +48,8 @@ class OrdersEndpointTest {
             new InMemoryProductRepository(
                     new Product("pandoro", "Pandoro 1 kg", Money.of(2_600, "EUR"), true),
                     new Product("panettone-classico", "Panettone Classico 1 kg", Money.of(2_800, "EUR"), true)),
-            orders, keys, new DirectTransactions(), gateway, new TestClock(NOW), UUID::randomUUID,
-            OrderService.DEFAULT_LOCK_TIMEOUT);
+            orders, keys, new InMemoryFraudFlagRepository(), new DirectTransactions(), gateway, FraudService.none(),
+            new TestClock(NOW), UUID::randomUUID, OrderService.DEFAULT_LOCK_TIMEOUT);
     private final TestServer server = TestServer.start(noHealthChecks(), noProducts(), new OrderController(service));
 
     @AfterEach
@@ -92,6 +95,27 @@ class OrdersEndpointTest {
                     """);
 
             assertThat(json(response).path("customerEmail").stringValue()).isEqualTo("anna@example.com");
+        }
+
+        @Test
+        void aFlaggedOrderIsAcceptedWithoutAPaymentPageAndWithoutSayingWhy() throws Exception {
+            // Telling the client which rule fired would teach a fraudster how to stay under it.
+            OrderService guarded = new OrderService(
+                    new InMemoryProductRepository(new Product("pandoro", "Pandoro 1 kg", Money.of(2_600, "EUR"), true)),
+                    new InMemoryOrderRepository(), new InMemoryIdempotencyKeyRepository(), new InMemoryFraudFlagRepository(),
+                    new DirectTransactions(), new StubPaymentGateway(),
+                    new FraudService(List.of(new QuantityPerProductRule(20))), new TestClock(NOW), UUID::randomUUID,
+                    OrderService.DEFAULT_LOCK_TIMEOUT);
+            try (TestServer flaggingServer = TestServer.start(noHealthChecks(), noProducts(), new OrderController(guarded))) {
+                HttpResponse<String> response = flaggingServer.post("/orders", """
+                        {"customerEmail": "anna@example.com", "items": [{"productId": "pandoro", "quantity": 40}]}
+                        """, "Idempotency-Key", KEY);
+
+                assertThat(response.statusCode()).isEqualTo(201);
+                assertThat(json(response).path("status").stringValue()).isEqualTo("FLAGGED");
+                assertThat(json(response).path("checkoutUrl").isNull()).isTrue();
+                assertThat(response.body()).doesNotContain("quantity_above_limit").doesNotContain("limit");
+            }
         }
 
         @Test

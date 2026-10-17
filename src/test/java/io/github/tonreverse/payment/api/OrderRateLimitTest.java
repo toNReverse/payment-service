@@ -9,8 +9,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.github.tonreverse.payment.domain.Money;
 import io.github.tonreverse.payment.domain.Product;
 import io.github.tonreverse.payment.ratelimit.FixedWindowRateLimiter;
+import io.github.tonreverse.payment.service.FraudService;
 import io.github.tonreverse.payment.service.OrderService;
 import io.github.tonreverse.payment.testing.DirectTransactions;
+import io.github.tonreverse.payment.testing.InMemoryFraudFlagRepository;
 import io.github.tonreverse.payment.testing.InMemoryIdempotencyKeyRepository;
 import io.github.tonreverse.payment.testing.InMemoryOrderRepository;
 import io.github.tonreverse.payment.testing.InMemoryProductRepository;
@@ -34,8 +36,9 @@ class OrderRateLimitTest {
     private final TestClock clock = new TestClock(Instant.parse("2026-12-01T10:15:30Z"));
     private final OrderService service = new OrderService(
             new InMemoryProductRepository(new Product("pandoro", "Pandoro 1 kg", Money.of(2_600, "EUR"), true)),
-            new InMemoryOrderRepository(), new InMemoryIdempotencyKeyRepository(), new DirectTransactions(),
-            new StubPaymentGateway(), clock, UUID::randomUUID, OrderService.DEFAULT_LOCK_TIMEOUT);
+            new InMemoryOrderRepository(), new InMemoryIdempotencyKeyRepository(), new InMemoryFraudFlagRepository(),
+            new DirectTransactions(), new StubPaymentGateway(), FraudService.none(), clock, UUID::randomUUID,
+            OrderService.DEFAULT_LOCK_TIMEOUT);
     private final TestServer server = TestServer.start(noHealthChecks(), noProducts(), new OrderController(service),
             noWebhooks(), new OrderRateLimitFilter(new FixedWindowRateLimiter(
                     "orders", new InMemoryWindowCounter(clock), 2, Duration.ofMinutes(1), clock)));

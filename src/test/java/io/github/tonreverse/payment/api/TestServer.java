@@ -2,8 +2,10 @@ package io.github.tonreverse.payment.api;
 
 import io.github.tonreverse.payment.App;
 import io.github.tonreverse.payment.ratelimit.FixedWindowRateLimiter;
+import io.github.tonreverse.payment.service.FraudService;
 import io.github.tonreverse.payment.service.OrderService;
 import io.github.tonreverse.payment.testing.DirectTransactions;
+import io.github.tonreverse.payment.testing.InMemoryFraudFlagRepository;
 import io.github.tonreverse.payment.testing.InMemoryIdempotencyKeyRepository;
 import io.github.tonreverse.payment.testing.InMemoryOrderRepository;
 import io.github.tonreverse.payment.testing.InMemoryProductRepository;
@@ -68,8 +70,9 @@ public final class TestServer implements AutoCloseable {
     /** For tests that do not care about orders. */
     public static OrderController noOrders() {
         return new OrderController(new OrderService(new InMemoryProductRepository(), new InMemoryOrderRepository(),
-                new InMemoryIdempotencyKeyRepository(), new DirectTransactions(), new StubPaymentGateway(),
-                Clock.systemUTC(), UUID::randomUUID, OrderService.DEFAULT_LOCK_TIMEOUT));
+                new InMemoryIdempotencyKeyRepository(), new InMemoryFraudFlagRepository(), new DirectTransactions(),
+                new StubPaymentGateway(), FraudService.none(), Clock.systemUTC(), UUID::randomUUID,
+                OrderService.DEFAULT_LOCK_TIMEOUT));
     }
 
     /** For tests that do not send webhooks. */
