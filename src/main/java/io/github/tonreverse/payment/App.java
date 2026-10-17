@@ -4,6 +4,7 @@ import com.zaxxer.hikari.HikariDataSource;
 import io.github.tonreverse.payment.api.ApiErrors;
 import io.github.tonreverse.payment.api.HealthController;
 import io.github.tonreverse.payment.api.OrderController;
+import io.github.tonreverse.payment.api.OrderRateLimitFilter;
 import io.github.tonreverse.payment.api.ProductController;
 import io.github.tonreverse.payment.api.StripeWebhookController;
 import io.github.tonreverse.payment.config.AppConfig;
@@ -26,12 +27,15 @@ import io.github.tonreverse.payment.persistence.OrderRepository;
 import io.github.tonreverse.payment.persistence.PaymentEventRepository;
 import io.github.tonreverse.payment.persistence.ProductRepository;
 import io.github.tonreverse.payment.persistence.Transactions;
+import io.github.tonreverse.payment.ratelimit.FixedWindowRateLimiter;
+import io.github.tonreverse.payment.ratelimit.RedisWindowCounter;
 import io.github.tonreverse.payment.service.OrderService;
 import io.github.tonreverse.payment.service.PaymentEventService;
 import io.javalin.Javalin;
 import io.javalin.json.JavalinJackson3;
 import java.net.URI;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import org.jooq.DSLContext;
@@ -89,7 +93,10 @@ public final class App {
         OrderController orders = new OrderController(orderService);
         StripeWebhookController webhooks = webhookController(config, paymentEvents);
 
-        Javalin server = createServer(health, products, orders, webhooks);
+        OrderRateLimitFilter orderRateLimit = new OrderRateLimitFilter(new FixedWindowRateLimiter(
+                "orders", new RedisWindowCounter(redis, Clock.systemUTC()), 10, Duration.ofMinutes(1), Clock.systemUTC()));
+
+        Javalin server = createServer(health, products, orders, webhooks, orderRateLimit);
 
         // On SIGTERM (docker stop): stop taking requests first, then close the pools.
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -131,8 +138,8 @@ public final class App {
      * <p>main() and the tests both call this, so tests exercise the same routes, JSON mapping and error
      * handling as production. Only the controllers' dependencies differ (fakes instead of Postgres).
      */
-    public static Javalin createServer(
-            HealthController health, ProductController products, OrderController orders, StripeWebhookController webhooks) {
+    public static Javalin createServer(HealthController health, ProductController products, OrderController orders,
+            StripeWebhookController webhooks, OrderRateLimitFilter orderRateLimit) {
         return Javalin.create(config -> {
             config.startup.showJavalinBanner = false;
             // Strict JSON input. Jackson 3 by default ignores unknown fields and accepts 2.5 or "2" where
@@ -145,6 +152,9 @@ public final class App {
                     .disable(DateTimeFeature.WRITE_DATES_AS_TIMESTAMPS)));
 
             ApiErrors.register(config.routes);
+
+            // Before-handlers run ahead of the endpoint: a refused request never reaches OrderController.
+            config.routes.before("/orders", orderRateLimit::handle);
 
             config.routes.get("/health", health::handle);
             config.routes.get("/products", products::list);

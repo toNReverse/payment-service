@@ -44,6 +44,11 @@ public final class ApiErrors {
             respond(ctx, HttpStatus.CONFLICT, "idempotency_key_in_use", List.of(e.getMessage()));
         });
 
+        routes.exception(RateLimitExceededException.class, (e, ctx) -> {
+            ctx.header("Retry-After", String.valueOf(e.retryAfterSeconds()));
+            respond(ctx, HttpStatus.TOO_MANY_REQUESTS, "rate_limited", List.of(e.getMessage()));
+        });
+
         // The provider's own message may name hosts or contain request ids: log it, do not return it.
         routes.exception(PaymentGatewayException.class, (e, ctx) -> {
             log.warn("Payment provider failed on {} {}", ctx.method(), ctx.path(), e);
