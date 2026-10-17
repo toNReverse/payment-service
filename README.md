@@ -1,10 +1,15 @@
 # payment-service
 
-A small payment backend in Java 21: orders, Stripe Checkout (test mode), signature-verified webhooks
-and simple fraud rules, on PostgreSQL and Redis.
+A payment backend in Java 21: idempotent order creation, Stripe Checkout (test mode) and
+signature-verified webhooks processed exactly once, on PostgreSQL.
 
-> Work in progress. The full README (architecture, API examples, design decisions) comes with the last
-> milestone. Design notes so far are in [docs/decisions.md](docs/decisions.md).
+## Status
+
+- Done: orders with Idempotency-Key, Stripe Checkout, webhooks (signature check, idempotent
+  processing, order state machine, amount-mismatch flagging), 200+ unit and Testcontainers tests in CI.
+- Next: fraud rules and rate limiting with Redis, structured JSON logging, full README.
+
+Design notes so far are in [docs/decisions.md](docs/decisions.md).
 
 ## Run locally
 
@@ -77,6 +82,6 @@ Requires JDK 21.
 
 ```sh
 ./gradlew test             # unit tests, no Docker needed
-./gradlew integrationTest  # repository tests against a real Postgres (Testcontainers, needs Docker)
+./gradlew integrationTest  # integration tests with Testcontainers (Postgres, stripe-mock); needs Docker
 ./gradlew build            # both, plus compilation and packaging (what CI runs)
 ```
