@@ -70,6 +70,14 @@ jooq {
                         value = "lower"
                     }
                 }
+                // H2, which simulates the migrations during generation, has no JSONB and reports those
+                // columns as JSON. The schema only declares JSONB, so map every JSON column back to it.
+                forcedTypes {
+                    forcedType {
+                        name = "JSONB"
+                        includeTypes = "JSON"
+                    }
+                }
             }
             target {
                 packageName = "io.github.tonreverse.payment.persistence.jooq"

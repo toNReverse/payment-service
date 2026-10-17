@@ -56,4 +56,19 @@ public enum OrderStatus {
     public boolean isTerminal() {
         return nextStatuses().isEmpty();
     }
+
+    /**
+     * Whether {@code target} can still be reached through one or more allowed transitions. Webhooks use
+     * it to tell an event that arrived too early (a refund before the payment: retry later) from one that
+     * no longer applies (an expiry after the payment: ignore). The table has no cycles, so a status never
+     * reaches itself.
+     */
+    public boolean canEventuallyReach(OrderStatus target) {
+        for (OrderStatus next : nextStatuses()) {
+            if (next == target || next.canEventuallyReach(target)) {
+                return true;
+            }
+        }
+        return false;
+    }
 }

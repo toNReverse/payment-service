@@ -5,22 +5,29 @@ import io.github.tonreverse.payment.api.ApiErrors;
 import io.github.tonreverse.payment.api.HealthController;
 import io.github.tonreverse.payment.api.OrderController;
 import io.github.tonreverse.payment.api.ProductController;
+import io.github.tonreverse.payment.api.StripeWebhookController;
 import io.github.tonreverse.payment.config.AppConfig;
 import io.github.tonreverse.payment.health.DatabaseHealthCheck;
 import io.github.tonreverse.payment.health.RedisHealthCheck;
 import io.github.tonreverse.payment.payment.FakePaymentGateway;
 import io.github.tonreverse.payment.payment.PaymentGateway;
 import io.github.tonreverse.payment.payment.StripePaymentGateway;
+import io.github.tonreverse.payment.payment.StripeWebhookParser;
 import io.github.tonreverse.payment.persistence.Database;
+import io.github.tonreverse.payment.persistence.FraudFlagRepository;
 import io.github.tonreverse.payment.persistence.IdempotencyKeyRepository;
+import io.github.tonreverse.payment.persistence.JooqFraudFlagRepository;
 import io.github.tonreverse.payment.persistence.JooqIdempotencyKeyRepository;
 import io.github.tonreverse.payment.persistence.JooqOrderRepository;
+import io.github.tonreverse.payment.persistence.JooqPaymentEventRepository;
 import io.github.tonreverse.payment.persistence.JooqProductRepository;
 import io.github.tonreverse.payment.persistence.JooqTransactions;
 import io.github.tonreverse.payment.persistence.OrderRepository;
+import io.github.tonreverse.payment.persistence.PaymentEventRepository;
 import io.github.tonreverse.payment.persistence.ProductRepository;
 import io.github.tonreverse.payment.persistence.Transactions;
 import io.github.tonreverse.payment.service.OrderService;
+import io.github.tonreverse.payment.service.PaymentEventService;
 import io.javalin.Javalin;
 import io.javalin.json.JavalinJackson3;
 import java.net.URI;
@@ -61,6 +68,8 @@ public final class App {
         ProductRepository productRepository = new JooqProductRepository(dsl);
         OrderRepository orderRepository = new JooqOrderRepository(dsl);
         IdempotencyKeyRepository idempotencyKeys = new JooqIdempotencyKeyRepository(dsl);
+        PaymentEventRepository paymentEventRepository = new JooqPaymentEventRepository(dsl);
+        FraudFlagRepository fraudFlagRepository = new JooqFraudFlagRepository(dsl);
         Transactions transactions = new JooqTransactions(dsl);
 
         // Payment provider.
@@ -69,6 +78,8 @@ public final class App {
         // Services.
         OrderService orderService = new OrderService(productRepository, orderRepository, idempotencyKeys,
                 transactions, paymentGateway, Clock.systemUTC(), UUID::randomUUID, OrderService.DEFAULT_LOCK_TIMEOUT);
+        PaymentEventService paymentEvents = new PaymentEventService(orderRepository, paymentEventRepository,
+                fraudFlagRepository, transactions, Clock.systemUTC(), UUID::randomUUID);
 
         // HTTP controllers, each receiving its dependencies through the constructor.
         HealthController health = new HealthController(List.of(
@@ -76,8 +87,9 @@ public final class App {
                 new RedisHealthCheck(redis)));
         ProductController products = new ProductController(productRepository);
         OrderController orders = new OrderController(orderService);
+        StripeWebhookController webhooks = webhookController(config, paymentEvents);
 
-        Javalin server = createServer(health, products, orders);
+        Javalin server = createServer(health, products, orders, webhooks);
 
         // On SIGTERM (docker stop): stop taking requests first, then close the pools.
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -103,13 +115,24 @@ public final class App {
         return new FakePaymentGateway();
     }
 
+    /** Without a signing secret, events cannot be verified, so the endpoint refuses them all (503). */
+    private static StripeWebhookController webhookController(AppConfig config, PaymentEventService paymentEvents) {
+        if (config.receivesStripeWebhooks()) {
+            return new StripeWebhookController(
+                    new StripeWebhookParser(config.stripeWebhookSecret(), Clock.systemUTC()), paymentEvents);
+        }
+        log.warn("STRIPE_WEBHOOK_SECRET is not set: POST /webhooks/stripe will answer 503");
+        return StripeWebhookController.notConfigured();
+    }
+
     /**
      * Builds the HTTP server from ready-made controllers, without starting it.
      *
      * <p>main() and the tests both call this, so tests exercise the same routes, JSON mapping and error
      * handling as production. Only the controllers' dependencies differ (fakes instead of Postgres).
      */
-    public static Javalin createServer(HealthController health, ProductController products, OrderController orders) {
+    public static Javalin createServer(
+            HealthController health, ProductController products, OrderController orders, StripeWebhookController webhooks) {
         return Javalin.create(config -> {
             config.startup.showJavalinBanner = false;
             // Strict JSON input. Jackson 3 by default ignores unknown fields and accepts 2.5 or "2" where
@@ -127,6 +150,7 @@ public final class App {
             config.routes.get("/products", products::list);
             config.routes.post("/orders", orders::create);
             config.routes.get("/orders/{id}", orders::get);
+            config.routes.post("/webhooks/stripe", webhooks::handle);
         });
     }
 }

@@ -23,6 +23,19 @@ public final class InMemoryOrderRepository implements OrderRepository {
         return Optional.ofNullable(orders.get(id));
     }
 
+    /** No locking needed: tests using this fake run on one thread. */
+    @Override
+    public Optional<Order> findByIdForUpdate(UUID id) {
+        return findById(id);
+    }
+
+    @Override
+    public void updateStatus(Order order) {
+        if (orders.replace(order.id(), order) == null) {
+            throw new IllegalStateException("order " + order.id() + " does not exist");
+        }
+    }
+
     public int count() {
         return orders.size();
     }

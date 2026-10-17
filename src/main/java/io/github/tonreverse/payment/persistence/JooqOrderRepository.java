@@ -57,10 +57,33 @@ public final class JooqOrderRepository implements OrderRepository {
 
     @Override
     public Optional<Order> findById(UUID id) {
-        OrdersRecord row = dsl.selectFrom(ORDERS).where(ORDERS.ID.eq(id)).fetchOne();
+        return toOrder(dsl.selectFrom(ORDERS).where(ORDERS.ID.eq(id)).fetchOne());
+    }
+
+    @Override
+    public Optional<Order> findByIdForUpdate(UUID id) {
+        // SELECT ... FOR UPDATE: the row stays locked until the surrounding transaction ends, so a second
+        // transaction locking the same order waits instead of acting on a status that is about to change.
+        return toOrder(dsl.selectFrom(ORDERS).where(ORDERS.ID.eq(id)).forUpdate().fetchOne());
+    }
+
+    @Override
+    public void updateStatus(Order order) {
+        int updated = dsl.update(ORDERS)
+                .set(ORDERS.STATUS, order.status().name())
+                .set(ORDERS.UPDATED_AT, toOffsetDateTime(order.updatedAt()))
+                .where(ORDERS.ID.eq(order.id()))
+                .execute();
+        if (updated != 1) {
+            throw new IllegalStateException("order " + order.id() + " does not exist");
+        }
+    }
+
+    private Optional<Order> toOrder(OrdersRecord row) {
         if (row == null) {
             return Optional.empty();
         }
+        UUID id = row.getId();
 
         // Items have no currency column: an order has a single currency, stored on the order row.
         Currency currency = Currency.getInstance(row.getCurrency());
