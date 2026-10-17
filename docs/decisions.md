@@ -278,3 +278,59 @@ A payment event marks the order `PAID` only if it is for the order's own checkou
 `amount_total` and currency equal the stored total. Otherwise the order becomes `FLAGGED` with a
 `fraud_flags` row saying what differed (`payment_amount_mismatch` or `checkout_session_mismatch`), for a
 human to review: money was taken, but not the money we expected.
+
+## 20. Fraud rules run before the payment page, and flag rather than refuse
+
+Every new order goes through `FraudService`, which runs each `FraudRule`. Each rule is a small class
+that can be read and tested on its own:
+
+| Rule | Fires when | Default threshold |
+|---|---|---|
+| `order_total_above_limit` | the order total is above a limit | 500.00 EUR (`FRAUD_MAX_ORDER_TOTAL_CENTS`) |
+| `quantity_above_limit` | one product is ordered in unusual quantity | 20 (`FRAUD_MAX_QUANTITY_PER_PRODUCT`) |
+| `orders_per_email_above_limit` | an email places too many orders in a window | 3 per 60 minutes (`FRAUD_MAX_ORDERS_PER_EMAIL`, `FRAUD_ORDERS_PER_EMAIL_WINDOW_MINUTES`) |
+
+All rules run, not just until the first hit, so a reviewer sees every reason. If any fires, the order is
+saved `FLAGGED` with one `fraud_flags` row per reason. No Stripe session is created, so it cannot be
+paid until someone looks at it. Order, flags and idempotency-key completion commit in one transaction.
+
+- **Flag, don't refuse.** A large order may be a genuine corporate gift; a human can still accept it,
+  while a refusal loses the sale.
+- **No reasons in the response.** The client gets 201 with status `FLAGGED` and no explanation: telling
+  it which limit it hit would teach a fraudster how to stay just under it.
+- **Rules run only for new orders.** A replayed request returns the stored order without evaluating the
+  rules again.
+- **The email rule keeps addresses out of Redis.** It counts in Redis (decision 21) under the SHA-256 of
+  the address, so the address itself is never stored there. Every evaluated order counts, even one whose
+  payment page later fails to be created: the counter cannot be rolled back with the Postgres
+  transaction, and over-counting is the safe side for a fraud signal.
+
+Limitations: there is no endpoint yet for a reviewer to release or cancel a flagged order. An email
+address is also easy to vary; stronger signals (card fingerprint, device) only exist after payment.
+
+## 21. Rate limiting: fixed windows in Redis
+
+`POST /orders` accepts at most 10 requests per client IP per minute (`RATE_LIMIT_ORDERS_PER_MINUTE`).
+Beyond that it answers 429 with `Retry-After`, the seconds until the window resets. The check runs in a
+before-handler, ahead of any parsing, so invalid requests count too and cannot be used to probe the API
+for free.
+
+The counters are **fixed windows**: one Redis key per client and window, aligned to the clock (a minute
+from :00 to :00). `INCR` and `EXPIRE` go in one `MULTI`/`EXEC`, so concurrent requests are never lost
+and a key can never be left without an expiry. A sliding log (a sorted set of timestamps) would be
+exact, but it stores every request. The cost of fixed windows is that a client can send up to twice the
+limit across a window boundary (10 at 10:00:59, 10 more at 10:01:00); for an order endpoint limited to
+10 a minute that is acceptable. The same counter powers the orders-per-email rule.
+
+The client is the TCP peer address. Behind a load balancer every request would come from the balancer,
+and the real address would be in `X-Forwarded-For`; that header can only be trusted when set by a known
+proxy, or any client could choose its own IP.
+
+## 22. If Redis is down, fail open
+
+Redis holds no money and no order state. If it cannot be reached, the rate limiter lets requests
+through and the orders-per-email rule is skipped, both with a warning in the log. The total and
+quantity rules need no Redis and still apply. For a shop, refusing every order during a Redis outage
+would cost more than a short period without these protections, so Postgres stays the only hard
+dependency for taking orders. `FraudAndRateLimitIntegrationTest` checks this with a real Jedis client
+pointed at a closed port.
