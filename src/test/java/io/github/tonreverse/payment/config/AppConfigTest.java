@@ -3,6 +3,8 @@ package io.github.tonreverse.payment.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.tonreverse.payment.domain.Money;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -193,6 +195,40 @@ class AppConfigTest {
         env.put("STRIPE_WEBHOOK_SECRET", "whsec_abcSECRET");
 
         assertThat(AppConfig.from(env).toString()).contains("whsec_****").doesNotContain("abcSECRET");
+    }
+
+    @Test
+    void fraudAndRateLimitSettingsHaveDefaults() {
+        AppConfig config = AppConfig.from(validEnv());
+
+        assertThat(config.fraud()).isEqualTo(new FraudSettings(Money.of(50_000, "EUR"), 20, 3, Duration.ofMinutes(60)));
+        assertThat(config.orderRateLimit()).isEqualTo(new RateLimitSettings(10, Duration.ofMinutes(1)));
+    }
+
+    @Test
+    void readsFraudAndRateLimitSettings() {
+        Map<String, String> env = validEnv();
+        env.put("FRAUD_MAX_ORDER_TOTAL_CENTS", "30000");
+        env.put("FRAUD_MAX_QUANTITY_PER_PRODUCT", "12");
+        env.put("FRAUD_MAX_ORDERS_PER_EMAIL", "5");
+        env.put("FRAUD_ORDERS_PER_EMAIL_WINDOW_MINUTES", "30");
+        env.put("RATE_LIMIT_ORDERS_PER_MINUTE", "4");
+
+        AppConfig config = AppConfig.from(env);
+
+        assertThat(config.fraud()).isEqualTo(new FraudSettings(Money.of(30_000, "EUR"), 12, 5, Duration.ofMinutes(30)));
+        assertThat(config.orderRateLimit()).isEqualTo(new RateLimitSettings(4, Duration.ofMinutes(1)));
+    }
+
+    @Test
+    void limitsMustBePositiveWholeNumbers() {
+        Map<String, String> env = validEnv();
+        env.put("FRAUD_MAX_QUANTITY_PER_PRODUCT", "0");
+        env.put("RATE_LIMIT_ORDERS_PER_MINUTE", "ten");
+
+        assertThatThrownBy(() -> AppConfig.from(env))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContainingAll("FRAUD_MAX_QUANTITY_PER_PRODUCT", "RATE_LIMIT_ORDERS_PER_MINUTE");
     }
 
     @Test

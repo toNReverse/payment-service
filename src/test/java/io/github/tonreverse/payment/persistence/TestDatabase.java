@@ -21,6 +21,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 public final class TestDatabase {
 
     private static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:16-alpine");
+    private static HikariDataSource dataSource;
     private static DSLContext dsl;
 
     private TestDatabase() {}
@@ -28,12 +29,17 @@ public final class TestDatabase {
     public static synchronized DSLContext dsl() {
         if (dsl == null) {
             POSTGRES.start();
-            HikariDataSource dataSource = Database.createDataSource(
+            dataSource = Database.createDataSource(
                     POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
             Database.migrate(dataSource);
             dsl = Database.createDsl(dataSource);
         }
         return dsl;
+    }
+
+    public static synchronized HikariDataSource dataSource() {
+        dsl();
+        return dataSource;
     }
 
     /** Removes what tests created. The seeded catalog stays; test products use ids starting with "test-". */

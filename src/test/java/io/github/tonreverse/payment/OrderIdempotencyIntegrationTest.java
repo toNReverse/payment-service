@@ -11,12 +11,14 @@ import io.github.tonreverse.payment.api.OrderController;
 import io.github.tonreverse.payment.api.TestServer;
 import io.github.tonreverse.payment.payment.PaymentGatewayException;
 import io.github.tonreverse.payment.persistence.IdempotencyRecord.State;
+import io.github.tonreverse.payment.persistence.JooqFraudFlagRepository;
 import io.github.tonreverse.payment.persistence.JooqIdempotencyKeyRepository;
 import io.github.tonreverse.payment.persistence.JooqOrderRepository;
 import io.github.tonreverse.payment.persistence.JooqProductRepository;
 import io.github.tonreverse.payment.persistence.JooqTransactions;
 import io.github.tonreverse.payment.persistence.TestDatabase;
 import io.github.tonreverse.payment.service.CreateOrderCommand;
+import io.github.tonreverse.payment.service.FraudService;
 import io.github.tonreverse.payment.service.IdempotencyKeyInUseException;
 import io.github.tonreverse.payment.service.OrderService;
 import io.github.tonreverse.payment.testing.StubPaymentGateway;
@@ -55,7 +57,8 @@ class OrderIdempotencyIntegrationTest {
     private final StubPaymentGateway gateway = new StubPaymentGateway();
     // A clock that does not move: every reservation in a test gets the same, predictable timestamp.
     private final OrderService service = new OrderService(new JooqProductRepository(dsl), new JooqOrderRepository(dsl),
-            keys, new JooqTransactions(dsl), gateway, new TestClock(START), UUID::randomUUID, LOCK_TIMEOUT);
+            keys, new JooqFraudFlagRepository(dsl), new JooqTransactions(dsl), gateway, FraudService.none(),
+            new TestClock(START), UUID::randomUUID, LOCK_TIMEOUT);
     private final TestServer server = TestServer.start(noHealthChecks(), noProducts(), new OrderController(service));
     private final String key = "test-key-" + UUID.randomUUID();
 

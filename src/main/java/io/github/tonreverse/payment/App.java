@@ -4,9 +4,14 @@ import com.zaxxer.hikari.HikariDataSource;
 import io.github.tonreverse.payment.api.ApiErrors;
 import io.github.tonreverse.payment.api.HealthController;
 import io.github.tonreverse.payment.api.OrderController;
+import io.github.tonreverse.payment.api.OrderRateLimitFilter;
 import io.github.tonreverse.payment.api.ProductController;
 import io.github.tonreverse.payment.api.StripeWebhookController;
 import io.github.tonreverse.payment.config.AppConfig;
+import io.github.tonreverse.payment.config.FraudSettings;
+import io.github.tonreverse.payment.fraud.OrderTotalRule;
+import io.github.tonreverse.payment.fraud.OrdersPerEmailRule;
+import io.github.tonreverse.payment.fraud.QuantityPerProductRule;
 import io.github.tonreverse.payment.health.DatabaseHealthCheck;
 import io.github.tonreverse.payment.health.RedisHealthCheck;
 import io.github.tonreverse.payment.payment.FakePaymentGateway;
@@ -26,6 +31,10 @@ import io.github.tonreverse.payment.persistence.OrderRepository;
 import io.github.tonreverse.payment.persistence.PaymentEventRepository;
 import io.github.tonreverse.payment.persistence.ProductRepository;
 import io.github.tonreverse.payment.persistence.Transactions;
+import io.github.tonreverse.payment.ratelimit.FixedWindowRateLimiter;
+import io.github.tonreverse.payment.ratelimit.RedisWindowCounter;
+import io.github.tonreverse.payment.ratelimit.WindowCounter;
+import io.github.tonreverse.payment.service.FraudService;
 import io.github.tonreverse.payment.service.OrderService;
 import io.github.tonreverse.payment.service.PaymentEventService;
 import io.javalin.Javalin;
@@ -63,6 +72,8 @@ public final class App {
         Database.migrate(dataSource);
         DSLContext dsl = Database.createDsl(dataSource);
         RedisClient redis = RedisClient.create(URI.create(config.redisUrl()));
+        // Fixed-window counters in Redis, shared by the rate limiter and the orders-per-email fraud rule.
+        WindowCounter windowCounter = new RedisWindowCounter(redis, Clock.systemUTC());
 
         // Repositories and transactions.
         ProductRepository productRepository = new JooqProductRepository(dsl);
@@ -77,7 +88,8 @@ public final class App {
 
         // Services.
         OrderService orderService = new OrderService(productRepository, orderRepository, idempotencyKeys,
-                transactions, paymentGateway, Clock.systemUTC(), UUID::randomUUID, OrderService.DEFAULT_LOCK_TIMEOUT);
+                fraudFlagRepository, transactions, paymentGateway, fraudService(config, windowCounter), Clock.systemUTC(),
+                UUID::randomUUID, OrderService.DEFAULT_LOCK_TIMEOUT);
         PaymentEventService paymentEvents = new PaymentEventService(orderRepository, paymentEventRepository,
                 fraudFlagRepository, transactions, Clock.systemUTC(), UUID::randomUUID);
 
@@ -89,7 +101,10 @@ public final class App {
         OrderController orders = new OrderController(orderService);
         StripeWebhookController webhooks = webhookController(config, paymentEvents);
 
-        Javalin server = createServer(health, products, orders, webhooks);
+        OrderRateLimitFilter orderRateLimit = new OrderRateLimitFilter(new FixedWindowRateLimiter("orders", windowCounter,
+                config.orderRateLimit().maxRequests(), config.orderRateLimit().window(), Clock.systemUTC()));
+
+        Javalin server = createServer(health, products, orders, webhooks, orderRateLimit);
 
         // On SIGTERM (docker stop): stop taking requests first, then close the pools.
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -115,6 +130,15 @@ public final class App {
         return new FakePaymentGateway();
     }
 
+    /** Every rule from the brief; thresholds from the environment (see AppConfig). */
+    private static FraudService fraudService(AppConfig config, WindowCounter windowCounter) {
+        FraudSettings fraud = config.fraud();
+        return new FraudService(List.of(
+                new OrderTotalRule(fraud.maxOrderTotal()),
+                new QuantityPerProductRule(fraud.maxQuantityPerProduct()),
+                new OrdersPerEmailRule(windowCounter, fraud.maxOrdersPerEmail(), fraud.ordersPerEmailWindow())));
+    }
+
     /** Without a signing secret, events cannot be verified, so the endpoint refuses them all (503). */
     private static StripeWebhookController webhookController(AppConfig config, PaymentEventService paymentEvents) {
         if (config.receivesStripeWebhooks()) {
@@ -131,8 +155,8 @@ public final class App {
      * <p>main() and the tests both call this, so tests exercise the same routes, JSON mapping and error
      * handling as production. Only the controllers' dependencies differ (fakes instead of Postgres).
      */
-    public static Javalin createServer(
-            HealthController health, ProductController products, OrderController orders, StripeWebhookController webhooks) {
+    public static Javalin createServer(HealthController health, ProductController products, OrderController orders,
+            StripeWebhookController webhooks, OrderRateLimitFilter orderRateLimit) {
         return Javalin.create(config -> {
             config.startup.showJavalinBanner = false;
             // Strict JSON input. Jackson 3 by default ignores unknown fields and accepts 2.5 or "2" where
@@ -145,6 +169,9 @@ public final class App {
                     .disable(DateTimeFeature.WRITE_DATES_AS_TIMESTAMPS)));
 
             ApiErrors.register(config.routes);
+
+            // Before-handlers run ahead of the endpoint: a refused request never reaches OrderController.
+            config.routes.before("/orders", orderRateLimit::handle);
 
             config.routes.get("/health", health::handle);
             config.routes.get("/products", products::list);

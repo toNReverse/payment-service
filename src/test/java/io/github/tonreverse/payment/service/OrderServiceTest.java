@@ -8,10 +8,12 @@ import io.github.tonreverse.payment.domain.Order;
 import io.github.tonreverse.payment.domain.OrderItem;
 import io.github.tonreverse.payment.domain.OrderStatus;
 import io.github.tonreverse.payment.domain.Product;
+import io.github.tonreverse.payment.fraud.FraudRule;
 import io.github.tonreverse.payment.payment.PaymentGatewayException;
 import io.github.tonreverse.payment.persistence.IdempotencyRecord.State;
 import io.github.tonreverse.payment.service.CreateOrderCommand.Line;
 import io.github.tonreverse.payment.testing.DirectTransactions;
+import io.github.tonreverse.payment.testing.InMemoryFraudFlagRepository;
 import io.github.tonreverse.payment.testing.InMemoryIdempotencyKeyRepository;
 import io.github.tonreverse.payment.testing.InMemoryOrderRepository;
 import io.github.tonreverse.payment.testing.InMemoryProductRepository;
@@ -20,6 +22,7 @@ import io.github.tonreverse.payment.testing.TestClock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -43,10 +46,30 @@ class OrderServiceTest {
     private final InMemoryOrderRepository orders = new InMemoryOrderRepository();
     private final InMemoryIdempotencyKeyRepository keys = new InMemoryIdempotencyKeyRepository();
     private final StubPaymentGateway gateway = new StubPaymentGateway();
+    private final InMemoryFraudFlagRepository fraudFlags = new InMemoryFraudFlagRepository();
     private final TestClock clock = new TestClock(START);
-    private final OrderService service = new OrderService(
-            new InMemoryProductRepository(PANDORO, CLASSICO, LIMONCELLO, IMPORTED),
-            orders, keys, new DirectTransactions(), gateway, clock, UUID::randomUUID, LOCK_TIMEOUT);
+    private final OrderService service = serviceWith(FraudService.none());
+
+    private OrderService serviceWith(FraudService fraud) {
+        return new OrderService(new InMemoryProductRepository(PANDORO, CLASSICO, LIMONCELLO, IMPORTED),
+                orders, keys, fraudFlags, new DirectTransactions(), gateway, fraud, clock, UUID::randomUUID, LOCK_TIMEOUT);
+    }
+
+    /** A rule that fires on every order and counts how often it ran. */
+    private static final class AlwaysFires implements FraudRule {
+        int runs;
+
+        @Override
+        public String name() {
+            return "test_rule";
+        }
+
+        @Override
+        public Optional<String> check(Order order) {
+            runs++;
+            return Optional.of("looks suspicious to the test");
+        }
+    }
 
     private static CreateOrderCommand twoPandoroOneClassico() {
         return new CreateOrderCommand("anna@example.com", List.of(new Line("pandoro", 2), new Line("panettone-classico", 1)));
@@ -208,6 +231,50 @@ class OrderServiceTest {
             assertThatThrownBy(() -> service.createOrder(KEY, command))
                     .isInstanceOfSatisfying(ValidationException.class,
                             e -> assertThat(e.details()).anySatisfy(detail -> assertThat(detail).contains("currency")));
+        }
+    }
+
+    @Nested
+    class Fraud {
+
+        @Test
+        void aSuspiciousOrderIsSavedFlaggedWithItsReasonsAndGetsNoPaymentPage() {
+            OrderService guarded = serviceWith(new FraudService(List.of(new AlwaysFires())));
+
+            CreateOrderResult result = guarded.createOrder(KEY, twoPandoroOneClassico());
+
+            Order order = result.order();
+            assertThat(order.status()).isEqualTo(OrderStatus.FLAGGED);
+            assertThat(order.checkoutSession()).isNull();
+            assertThat(gateway.calls()).isZero();
+            assertThat(orders.findById(order.id())).hasValue(order);
+            assertThat(fraudFlags.findByOrderId(order.id())).singleElement().satisfies(flag -> {
+                assertThat(flag.rule()).isEqualTo("test_rule");
+                assertThat(flag.reason()).isEqualTo("looks suspicious to the test");
+            });
+            assertThat(keys.find(KEY)).hasValueSatisfying(record -> assertThat(record.state()).isEqualTo(State.COMPLETED));
+        }
+
+        @Test
+        void aRetryReturnsTheFlaggedOrderWithoutRunningTheRulesAgain() {
+            AlwaysFires rule = new AlwaysFires();
+            OrderService guarded = serviceWith(new FraudService(List.of(rule)));
+            Order first = guarded.createOrder(KEY, twoPandoroOneClassico()).order();
+
+            CreateOrderResult retry = guarded.createOrder(KEY, twoPandoroOneClassico());
+
+            assertThat(retry.replayed()).isTrue();
+            assertThat(retry.order()).isEqualTo(first);
+            assertThat(rule.runs).isEqualTo(1);
+            assertThat(fraudFlags.findByOrderId(first.id())).hasSize(1);
+        }
+
+        @Test
+        void anOrderNoRuleObjectsToGoesToCheckout() {
+            OrderService guarded = serviceWith(new FraudService(List.of()));
+
+            assertThat(guarded.createOrder(KEY, twoPandoroOneClassico()).order().status())
+                    .isEqualTo(OrderStatus.PENDING_PAYMENT);
         }
     }
 

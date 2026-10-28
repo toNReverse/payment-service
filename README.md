@@ -6,10 +6,12 @@ signature-verified webhooks processed exactly once, on PostgreSQL.
 ## Status
 
 - Done: orders with Idempotency-Key, Stripe Checkout, webhooks (signature check, idempotent
-  processing, order state machine, amount-mismatch flagging), 200+ unit and Testcontainers tests in CI.
-- Next: fraud rules and rate limiting with Redis, structured JSON logging, full README.
+  processing, order state machine, amount-mismatch flagging), fraud rules that flag suspicious orders,
+  per-IP rate limiting with Redis, 200+ unit and Testcontainers tests in CI.
+- Next: structured JSON logging, full README.
 
-Design notes so far are in [docs/decisions.md](docs/decisions.md).
+Design notes so far are in [docs/decisions.md](docs/decisions.md). Every command to run, demo and test
+the service locally is in [docs/runbook.md](docs/runbook.md).
 
 ## Run locally
 
@@ -82,6 +84,6 @@ Requires JDK 21.
 
 ```sh
 ./gradlew test             # unit tests, no Docker needed
-./gradlew integrationTest  # integration tests with Testcontainers (Postgres, stripe-mock); needs Docker
+./gradlew integrationTest  # integration tests with Testcontainers (Postgres, Redis, stripe-mock); needs Docker
 ./gradlew build            # both, plus compilation and packaging (what CI runs)
 ```

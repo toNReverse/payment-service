@@ -1,11 +1,15 @@
 package io.github.tonreverse.payment.api;
 
 import io.github.tonreverse.payment.App;
+import io.github.tonreverse.payment.ratelimit.FixedWindowRateLimiter;
+import io.github.tonreverse.payment.service.FraudService;
 import io.github.tonreverse.payment.service.OrderService;
 import io.github.tonreverse.payment.testing.DirectTransactions;
+import io.github.tonreverse.payment.testing.InMemoryFraudFlagRepository;
 import io.github.tonreverse.payment.testing.InMemoryIdempotencyKeyRepository;
 import io.github.tonreverse.payment.testing.InMemoryOrderRepository;
 import io.github.tonreverse.payment.testing.InMemoryProductRepository;
+import io.github.tonreverse.payment.testing.InMemoryWindowCounter;
 import io.github.tonreverse.payment.testing.StubPaymentGateway;
 import io.javalin.Javalin;
 import java.net.URI;
@@ -13,6 +17,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import tools.jackson.databind.JsonNode;
@@ -38,7 +43,18 @@ public final class TestServer implements AutoCloseable {
 
     public static TestServer start(HealthController health, ProductController products, OrderController orders,
             StripeWebhookController webhooks) {
-        return new TestServer(App.createServer(health, products, orders, webhooks).start(0));
+        return start(health, products, orders, webhooks, noRateLimit());
+    }
+
+    public static TestServer start(HealthController health, ProductController products, OrderController orders,
+            StripeWebhookController webhooks, OrderRateLimitFilter orderRateLimit) {
+        return new TestServer(App.createServer(health, products, orders, webhooks, orderRateLimit).start(0));
+    }
+
+    /** For tests that do not care about rate limiting: a limit no test reaches. */
+    public static OrderRateLimitFilter noRateLimit() {
+        return new OrderRateLimitFilter(new FixedWindowRateLimiter("orders",
+                new InMemoryWindowCounter(Clock.systemUTC()), Integer.MAX_VALUE, Duration.ofMinutes(1), Clock.systemUTC()));
     }
 
     /** For tests that do not care about health checks. */
@@ -54,8 +70,9 @@ public final class TestServer implements AutoCloseable {
     /** For tests that do not care about orders. */
     public static OrderController noOrders() {
         return new OrderController(new OrderService(new InMemoryProductRepository(), new InMemoryOrderRepository(),
-                new InMemoryIdempotencyKeyRepository(), new DirectTransactions(), new StubPaymentGateway(),
-                Clock.systemUTC(), UUID::randomUUID, OrderService.DEFAULT_LOCK_TIMEOUT));
+                new InMemoryIdempotencyKeyRepository(), new InMemoryFraudFlagRepository(), new DirectTransactions(),
+                new StubPaymentGateway(), FraudService.none(), Clock.systemUTC(), UUID::randomUUID,
+                OrderService.DEFAULT_LOCK_TIMEOUT));
     }
 
     /** For tests that do not send webhooks. */

@@ -1,10 +1,14 @@
 package io.github.tonreverse.payment.service;
 
 import io.github.tonreverse.payment.domain.CheckoutSession;
+import io.github.tonreverse.payment.domain.FraudFlag;
 import io.github.tonreverse.payment.domain.Order;
 import io.github.tonreverse.payment.domain.OrderItem;
+import io.github.tonreverse.payment.domain.OrderStatus;
 import io.github.tonreverse.payment.domain.Product;
+import io.github.tonreverse.payment.fraud.FraudFinding;
 import io.github.tonreverse.payment.payment.PaymentGateway;
+import io.github.tonreverse.payment.persistence.FraudFlagRepository;
 import io.github.tonreverse.payment.persistence.IdempotencyKeyRepository;
 import io.github.tonreverse.payment.persistence.IdempotencyRecord;
 import io.github.tonreverse.payment.persistence.IdempotencyRecord.State;
@@ -33,8 +37,9 @@ import org.slf4j.LoggerFactory;
  * <ol>
  *   <li>Reserve the key (one atomic INSERT). If it exists: replay its order, reject a different request
  *       with the same key, or report that the first request is still running.
- *   <li>Holding the key, price the items from the catalog and create the provider's checkout session.
- *       This happens outside any database transaction, so no connection waits on the network.
+ *   <li>Holding the key, price the items from the catalog and run the fraud rules. A clean order gets
+ *       the provider's checkout session, created outside any database transaction so no connection
+ *       waits on the network. A suspicious one is saved FLAGGED, with its reasons, and no session.
  *   <li>Save the order and complete the key in one transaction. Completing is fenced by the reservation
  *       timestamp, so a request whose reservation was taken over cannot also save an order.
  *   <li>On any failure before that, release the key, so the client can retry with it.
@@ -59,20 +64,24 @@ public final class OrderService {
     private final ProductRepository products;
     private final OrderRepository orders;
     private final IdempotencyKeyRepository idempotencyKeys;
+    private final FraudFlagRepository fraudFlags;
     private final Transactions transactions;
     private final PaymentGateway paymentGateway;
+    private final FraudService fraud;
     private final Clock clock;
     private final Supplier<UUID> newOrderId;
     private final Duration lockTimeout;
 
     public OrderService(ProductRepository products, OrderRepository orders, IdempotencyKeyRepository idempotencyKeys,
-            Transactions transactions, PaymentGateway paymentGateway, Clock clock, Supplier<UUID> newOrderId,
-            Duration lockTimeout) {
+            FraudFlagRepository fraudFlags, Transactions transactions, PaymentGateway paymentGateway, FraudService fraud,
+            Clock clock, Supplier<UUID> newOrderId, Duration lockTimeout) {
         this.products = products;
         this.orders = orders;
         this.idempotencyKeys = idempotencyKeys;
+        this.fraudFlags = fraudFlags;
         this.transactions = transactions;
         this.paymentGateway = paymentGateway;
+        this.fraud = fraud;
         this.clock = clock;
         this.newOrderId = newOrderId;
         this.lockTimeout = lockTimeout;
@@ -129,19 +138,38 @@ public final class OrderService {
     private Order createHolding(String key, Instant lockedAt, CreateOrderCommand command) {
         try {
             Order order = Order.create(newOrderId.get(), command.customerEmail(), priceFromCatalog(command), now());
-            CheckoutSession session = paymentGateway.createCheckoutSession(order);
-            Order pending = order.startCheckout(session, now());
+            List<FraudFinding> findings = fraud.evaluate(order);
+
+            Order toSave;
+            List<FraudFlag> flags;
+            if (findings.isEmpty()) {
+                CheckoutSession session = paymentGateway.createCheckoutSession(order);
+                toSave = order.startCheckout(session, now());
+                flags = List.of();
+            } else {
+                // A suspicious order is kept, but gets no payment page until a human has reviewed it.
+                Instant now = now();
+                toSave = order.transitionTo(OrderStatus.FLAGGED, now);
+                flags = findings.stream()
+                        .map(finding -> new FraudFlag(newOrderId.get(), order.id(), finding.rule(), finding.reason(), now))
+                        .toList();
+            }
 
             transactions.inTransaction(() -> {
-                orders.insert(pending);
-                if (!idempotencyKeys.complete(key, lockedAt, pending.id())) {
+                orders.insert(toSave);
+                flags.forEach(fraudFlags::insert);
+                if (!idempotencyKeys.complete(key, lockedAt, toSave.id())) {
                     // We were so slow that another request took the key over. Throwing rolls back our
                     // order, so the key ends up with a single order: the other request's.
                     throw new IdempotencyKeyInUseException(key);
                 }
             });
-            log.info("Created order {} for Idempotency-Key {}", pending.id(), key);
-            return pending;
+            if (flags.isEmpty()) {
+                log.info("Created order {} for Idempotency-Key {}", toSave.id(), key);
+            } else {
+                log.warn("Created order {} as FLAGGED: {}", toSave.id(), findings);
+            }
+            return toSave;
         } catch (RuntimeException e) {
             releaseAfterFailure(key, lockedAt, e);
             throw e;
