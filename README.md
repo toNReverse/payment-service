@@ -10,7 +10,8 @@ signature-verified webhooks processed exactly once, on PostgreSQL.
   per-IP rate limiting with Redis, 200+ unit and Testcontainers tests in CI.
 - Next: structured JSON logging, full README.
 
-Design notes so far are in [docs/decisions.md](docs/decisions.md).
+Design notes so far are in [docs/decisions.md](docs/decisions.md). Every command to run, demo and test
+the service locally is in [docs/runbook.md](docs/runbook.md).
 
 ## Run locally
 
