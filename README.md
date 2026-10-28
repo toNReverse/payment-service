@@ -3,12 +3,22 @@
 A payment backend in Java 21: idempotent order creation, Stripe Checkout (test mode) and
 signature-verified webhooks processed exactly once, on PostgreSQL.
 
-## Status
+## Roadmap
 
-- Done: orders with Idempotency-Key, Stripe Checkout, webhooks (signature check, idempotent
-  processing, order state machine, amount-mismatch flagging), fraud rules that flag suspicious orders,
-  per-IP rate limiting with Redis, 200+ unit and Testcontainers tests in CI.
-- Next: structured JSON logging, full README.
+Built in milestones, each one test-first and merged only with CI green.
+
+| # | Milestone | What it added | Status |
+|---|---|---|---|
+| 1 | Skeleton | Gradle build, configuration from the environment, `GET /health` checking Postgres and Redis, Docker Compose, CI on GitHub Actions | Done |
+| 2 | Domain | `Money` in minor units, order status state machine | Done |
+| 3 | Persistence | Flyway schema, jOOQ code generation, repositories, `GET /products`, Testcontainers tests | Done |
+| 4 | Orders | `POST /orders` and `GET /orders/{id}` with Idempotency-Key, consistent JSON errors | Done |
+| 5 | Stripe | Checkout sessions in test mode behind a `PaymentGateway` interface | Done |
+| 6 | Webhooks | Signature check, each event applied exactly once, out-of-order events, amount-mismatch flagging ([#1](https://github.com/toNReverse/payment-service/pull/1)) | Done |
+| 7 | Fraud and rate limiting | Fraud rules that flag suspicious orders, per-IP rate limiting on `POST /orders` with Redis ([#2](https://github.com/toNReverse/payment-service/pull/2)) | Done |
+| 8 | Polish | Structured JSON logging with the order id, full README with an architecture diagram | Next |
+
+250+ unit tests and 50+ integration tests against real Postgres, Redis and stripe-mock run on every push.
 
 Design notes so far are in [docs/decisions.md](docs/decisions.md). Every command to run, demo and test
 the service locally is in [docs/runbook.md](docs/runbook.md).
